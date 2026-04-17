@@ -1,0 +1,182 @@
+/* ============================================================
+   amaranta — Global Styles
+   Tailwind v4: @import replaces @tailwind directives
+   @theme replaces tailwind.config.js `theme.extend`
+   ============================================================ */
+
+@import "tailwindcss";
+
+/* ── Custom Design Tokens ─────────────────────────────────── */
+@theme {
+  /* Colors */
+  --color-cream: #faf7f2;
+  --color-cream-dark: #f0ebe1;
+  --color-cream-border: #e5ddd0;
+  --color-parchment: #ede5d8;
+  --color-dark: #1c1a17;
+  --color-dark-muted: #3d3a35;
+  --color-dark-subtle: #6b6660;
+  --color-gold: #c9a96e;
+  --color-gold-light: #dec28a;
+  --color-gold-pale: #f0e4cc;
+  --color-ivory: #fffdf8;
+  --color-charcoal: #2a2825;
+  --color-slate: #8a8480;
+
+  /* Typography */
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "DM Sans", system-ui, sans-serif;
+
+  /* Spacing extras */
+  --spacing-18: 4.5rem;
+  --spacing-22: 5.5rem;
+  --spacing-88: 22rem;
+  --spacing-100: 25rem;
+  --spacing-120: 30rem;
+
+  /* Border radius */
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  --radius-4xl: 2rem;
+
+  /* Shadows */
+  --shadow-luxury: 0 4px 40px rgba(28, 26, 23, 0.1);
+  --shadow-card: 0 2px 20px rgba(28, 26, 23, 0.08);
+  --shadow-gold: 0 4px 24px rgba(201, 169, 110, 0.25);
+}
+
+/* ── Base Reset & Globals ──────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-cream);
+  color: var(--color-dark);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ── Scrollbar styling ─────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-cream);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-gold);
+  border-radius: 3px;
+}
+
+/* ── Utility: Gold divider line ────────────────────────────── */
+.gold-rule {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-gold),
+    transparent
+  );
+}
+
+/* ── Utility: Fade-up animation ────────────────────────────── */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% center;
+  }
+  to {
+    background-position: 200% center;
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.7s ease forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease forwards;
+}
+
+.animate-delay-100 {
+  animation-delay: 0.1s;
+}
+.animate-delay-200 {
+  animation-delay: 0.2s;
+}
+.animate-delay-300 {
+  animation-delay: 0.3s;
+}
+.animate-delay-400 {
+  animation-delay: 0.4s;
+}
+.animate-delay-500 {
+  animation-delay: 0.5s;
+}
+
+/* ── Gold shimmer text ─────────────────────────────────────── */
+.text-gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-gold) 0%,
+    var(--color-gold-light) 40%,
+    var(--color-gold) 60%,
+    var(--color-gold-light) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 4s linear infinite;
+}
+
+/* ── Image overlay gradient ────────────────────────────────── */
+.img-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(28, 26, 23, 0.65) 0%,
+    transparent 60%
+  );
+  border-radius: inherit;
+}
+
+/* ── Hover scale on cards ──────────────────────────────────── */
+.hover-scale {
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hover-scale:hover {
+  transform: scale(1.025);
+}
