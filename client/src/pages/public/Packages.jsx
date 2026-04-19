@@ -7,41 +7,26 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import Navbar from "../../components/Navbar";
 import { PACKAGES, AMARANTA_INFO, formatRupiah } from "../../data/packages";
-import useCartStore from "../../store/cartStore";
 import useAuthStore from "../../store/authStore";
 
 function Packages() {
   const navigate = useNavigate();
-  const addItem = useCartStore((s) => s.addItem);
-  const isInCart = useCartStore((s) => s.isInCart);
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = !!(token && user);
 
-  const [activePkg, setActivePkg] = useState(null); // untuk expand detail
-  const [added, setAdded] = useState(null); // animasi "ditambahkan"
+  const [activePkg, setActivePkg] = useState(null);
 
   function handlePesan(pkg) {
     if (!isAuthenticated) {
+      sessionStorage.setItem(
+        "pendingPackage",
+        JSON.stringify({ id: pkg.id, dbId: pkg.dbId }),
+      );
       navigate("/masuk");
       return;
     }
-    addItem({
-      vendorId: AMARANTA_INFO.id,
-      vendorName: AMARANTA_INFO.name,
-      vendorSlug: AMARANTA_INFO.slug,
-      // packageId = ID numerik dari DB, diisi setelah connect ke backend
-      // tierId    = slug paket: 'silver' | 'gold' | 'platinum'
-      packageId: pkg.dbId || null,
-      tierId: pkg.id,
-      tierLabel: pkg.tier,
-      price: pkg.price,
-      weddingDate: "",
-      notes: "",
-    });
-    setAdded(pkg.id);
-    // Langsung ke checkout (tidak perlu cart sebagai perantara)
-    setTimeout(() => navigate("/checkout"), 600);
+    navigate("/pesan/" + pkg.id);
   }
 
   const allFeatures = [
@@ -91,10 +76,6 @@ function Packages() {
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-12 py-16">
         <div className="grid md:grid-cols-3 gap-6 lg:gap-8">
           {PACKAGES.map((pkg) => {
-            const inCart =
-              isInCart(AMARANTA_INFO.id) &&
-              (added === pkg.id || isInCart(AMARANTA_INFO.id));
-            const isAdding = added === pkg.id;
             const isExpanded = activePkg === pkg.id;
 
             return (
@@ -245,16 +226,12 @@ function Packages() {
                     onClick={() => handlePesan(pkg)}
                     className={[
                       "w-full py-3.5 text-sm uppercase tracking-widest font-[var(--font-sans)] font-medium transition-all duration-300",
-                      isAdding
-                        ? "bg-emerald-500 text-white"
-                        : pkg.popular
-                          ? "bg-[var(--color-gold)] text-[var(--color-dark)] hover:bg-[var(--color-gold-light)]"
-                          : "bg-[var(--color-dark)] text-[var(--color-cream)] hover:bg-[var(--color-charcoal)]",
+                      pkg.popular
+                        ? "bg-[var(--color-gold)] text-[var(--color-dark)] hover:bg-[var(--color-gold-light)]"
+                        : "bg-[var(--color-dark)] text-[var(--color-cream)] hover:bg-[var(--color-charcoal)]",
                     ].join(" ")}
                   >
-                    {isAdding
-                      ? "✓ Ditambahkan!"
-                      : "Pesan Paket " + pkg.tier + ""}
+                    {"Pesan Paket " + pkg.tier}
                   </button>
                 </div>
               </div>
@@ -417,7 +394,7 @@ function Packages() {
           </p>
           <div className="flex flex-wrap gap-3 justify-center">
             <Link
-              to="/keranjang"
+              to="/paket"
               className="px-8 py-3.5 bg-[var(--color-gold)] text-[var(--color-dark)] text-xs uppercase tracking-widest font-[var(--font-sans)] font-medium hover:bg-[var(--color-gold-light)] transition-colors"
             >
               Lihat Keranjang

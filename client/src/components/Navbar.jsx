@@ -4,12 +4,10 @@
 //   1. Username klik → /pelanggan/profil (bukan getDashboardLink)
 //   2. Sudah login: tampilkan dropdown user (nama+peran+profil+logout)
 //   3. Responsivitas mobile diperbaiki
-//   4. Cart badge benar dari store
 // ============================================================
 import { useState, useEffect, useRef } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import useAuthStore from "../store/authStore";
-import useCartStore from "../store/cartStore";
 
 function Navbar({ transparent, theme }) {
   transparent = transparent !== undefined ? transparent : false;
@@ -23,11 +21,9 @@ function Navbar({ transparent, theme }) {
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const logout = useAuthStore((s) => s.logout);
-  const items = useCartStore((s) => s.items);
   const navigate = useNavigate();
 
   const isLoggedIn = !!(token && user);
-  const cartCount = items.length;
 
   // Scroll
   useEffect(() => {
@@ -131,39 +127,8 @@ function Navbar({ transparent, theme }) {
             ))}
           </nav>
 
-          {/* ── Kanan: Cart + Auth ───────────────────── */}
+          {/* ── Kanan: Auth ──────────────────────────── */}
           <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            {/* Cart icon */}
-            <Link
-              to="/keranjang"
-              aria-label="Keranjang"
-              className={[
-                "relative flex items-center justify-center w-9 h-9 transition-colors",
-                isDark
-                  ? "text-white/80 hover:text-[var(--color-gold)]"
-                  : "text-[var(--color-dark-muted)] hover:text-[var(--color-gold)]",
-              ].join(" ")}
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                />
-              </svg>
-              {cartCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-[var(--color-gold)] rounded-full flex items-center justify-center text-[9px] font-bold text-[var(--color-dark)] font-[var(--font-sans)]">
-                  {cartCount > 9 ? "9+" : cartCount}
-                </span>
-              )}
-            </Link>
-
             {/* Auth */}
             {isLoggedIn ? (
               /* ── User dropdown ─────────────────────── */
@@ -399,34 +364,7 @@ function Navbar({ transparent, theme }) {
                 </Link>
               ))}
             </div>
-            {/* Cart */}
-            <div className="border-t border-[var(--color-cream-border)] px-5 py-3">
-              <Link
-                to="/keranjang"
-                onClick={() => setMenuOpen(false)}
-                className="flex items-center gap-2 text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)]"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                  />
-                </svg>
-                Keranjang
-                {cartCount > 0 && (
-                  <span className="w-5 h-5 bg-[var(--color-gold)] rounded-full text-[10px] font-bold text-[var(--color-dark)] flex items-center justify-center">
-                    {cartCount}
-                  </span>
-                )}
-              </Link>
-            </div>
+            <div className="border-t border-[var(--color-cream-border)] px-5 py-3"></div>
             {/* Auth mobile */}
             <div className="border-t border-[var(--color-cream-border)] py-2">
               {isLoggedIn ? (

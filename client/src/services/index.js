@@ -1,4 +1,3 @@
-// src/services/index.js — DIPERBARUI
 import api from "./api";
 import {
   AUTH,
@@ -12,7 +11,6 @@ import {
 
 const d = (r) => r.data?.data ?? r.data;
 
-// Auth
 export const authService = {
   login: (c) => api.post(AUTH.LOGIN, c).then(d),
   register: (d2) => api.post(AUTH.REGISTER, d2).then(d),
@@ -26,7 +24,6 @@ export const authService = {
   changePassword: (d2) => api.put(AUTH.CHANGE_PASSWORD, d2).then(d),
 };
 
-// Vendor
 export const vendorService = {
   getAll: (p) => api.get(VENDORS.LIST, { params: p }).then(d),
   getBySlug: (s) => api.get(VENDORS.BY_SLUG(s)).then(d),
@@ -35,60 +32,49 @@ export const vendorService = {
   update: (id, data) => api.put(VENDORS.UPDATE(id), data).then(d),
 };
 
-// Packages (public)
 export const packageService = {
   getAll: () => api.get(PACKAGES.LIST).then(d),
   getByTier: (t) => api.get(PACKAGES.BY_TIER(t)).then(d),
 };
 
-// Booking (customer)
 export const bookingService = {
   getMy: () => api.get(BOOKINGS.MY).then(d),
   getById: (id) => api.get(BOOKINGS.DETAIL(id)).then(d),
-
-  // PERUBAHAN: create tidak perlu vendor_id lagi
-  // Wajib kirim: package_id, pemesan_*, wedding_date, location, konsep
   create: (data) => api.post(BOOKINGS.CREATE, data).then(d),
-
-  payDP: (id) => api.post(BOOKINGS.PAY_DP(id)).then(d),
-  payFull: (id) => api.post(BOOKINGS.PAY_FULL(id)).then(d),
+  pay: (id) => api.post(BOOKINGS.PAY(id)).then(d),
+  reschedule: (id, data) => api.patch(BOOKINGS.RESCHEDULE(id), data).then(d),
   rate: (id, data) => api.post(BOOKINGS.RATE(id), data).then(d),
 };
 
-// Vendor request (vendor merespons request dari admin)
 export const vendorRequestService = {
   getInbox: () => api.get(BOOKINGS.VENDOR_INBOX).then(d),
   confirm: (id, data) => api.post(VENDOR_REQUESTS.CONFIRM(id), data).then(d),
   reject: (id, data) => api.post(VENDOR_REQUESTS.REJECT(id), data).then(d),
 };
 
-// Admin
 export const adminService = {
   getStats: () => api.get(ADMIN.STATS).then(d),
   getUsers: (p) => api.get(ADMIN.USERS, { params: p }).then(d),
   deleteUser: (id) => api.delete(ADMIN.USER_DELETE(id)).then(d),
+
   getVendors: (p) => api.get(ADMIN.VENDORS, { params: p }).then(d),
+  createVendor: (data) => api.post(ADMIN.VENDOR_CREATE, data).then(d),
+  updateVendor: (id, data) => api.put(ADMIN.VENDOR_UPDATE(id), data).then(d),
   approveVendor: (id) => api.patch(ADMIN.VENDOR_APPROVE(id)).then(d),
   rejectVendor: (id) => api.patch(ADMIN.VENDOR_REJECT(id)).then(d),
-  getBookings: (p) => api.get(ADMIN.BOOKINGS, { params: p }).then(d),
+  deleteVendor: (id) => api.delete(ADMIN.VENDOR_DELETE(id)).then(d),
 
-  // Workflow WO — semua method baru
-  assignVendor: (bookingId, data) =>
-    api.patch(ADMIN.ASSIGN_VENDOR(bookingId), data).then(d),
-  reassignVendor: (bookingId, data) =>
-    api.patch(ADMIN.REASSIGN_VENDOR(bookingId), data).then(d),
-  setTechMeeting: (bookingId, data) =>
-    api.post(ADMIN.TECH_MEETING(bookingId), data).then(d),
-  confirmTech: (bookingId) => api.patch(ADMIN.CONFIRM_TECH(bookingId)).then(d),
-  updatePreparation: (bookingId, pct) =>
-    api
-      .patch(ADMIN.PREPARATION(bookingId), { preparation_progress: pct })
-      .then(d),
-  executeEvent: (bookingId) =>
-    api.patch(ADMIN.EXECUTE_EVENT(bookingId)).then(d),
+  getBookings: (p) => api.get(ADMIN.BOOKINGS, { params: p }).then(d),
+  assignVendor: (id, data) => api.patch(ADMIN.ASSIGN_VENDOR(id), data).then(d),
+  reassignVendor: (id, data) =>
+    api.patch(ADMIN.REASSIGN_VENDOR(id), data).then(d),
+  setTechMeeting: (id, data) => api.post(ADMIN.TECH_MEETING(id), data).then(d),
+  confirmTech: (id) => api.patch(ADMIN.CONFIRM_TECH(id)).then(d),
+  updatePreparation: (id, pct) =>
+    api.patch(ADMIN.PREPARATION(id), { preparation_progress: pct }).then(d),
+  executeEvent: (id) => api.patch(ADMIN.EXECUTE_EVENT(id)).then(d),
 };
 
-// Gallery
 export const galleryService = {
   getAll: () => api.get(GALLERY.LIST).then(d),
   upload: (f) => {

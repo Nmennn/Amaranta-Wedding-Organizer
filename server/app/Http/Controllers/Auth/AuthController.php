@@ -63,13 +63,13 @@ class AuthController extends Controller
             'name'     => 'required|string|max:255',
             'email'    => 'required|email|unique:users,email',
             'phone'    => 'required|string|regex:/^08\d{8,11}$/',
-            'username' => 'required|string|min:4|unique:users,username|regex:/^\w+$/',
             'password' => 'required|string|min:8',
-            'role'     => 'required|in:customer,vendor',
+            // username auto-generate dari email, tidak perlu dari form
+            // role opsional, default customer
         ], [
             // Pesan error dalam Bahasa Indonesia
             'email.unique'     => 'Email sudah terdaftar.',
-            'username.unique'  => 'Username sudah dipakai.',
+            // username auto-generated
             'phone.regex'      => 'Format HP tidak valid (contoh: 081234567890).',
             'username.regex'   => 'Username hanya boleh huruf, angka, dan underscore.',
             'password.min'     => 'Password minimal 8 karakter.',
@@ -80,10 +80,9 @@ class AuthController extends Controller
             'name'     => $request->name,
             'email'    => $request->email,
             'phone'    => $request->phone,
-            'username' => $request->username,
-            'password' => $request->password,   // auto-hashed via cast
-            'role'     => $request->role,
-            // email_verified_at = null sampai OTP diverifikasi
+            'username' => explode('@', $request->email)[0] . '_' . rand(100, 999),
+            'role'     => 'customer',   // selalu customer saat daftar publik
+            'password' => $request->password,
         ]);
 
         // Generate & kirim OTP ke email

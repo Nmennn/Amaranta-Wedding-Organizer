@@ -1,4 +1,3 @@
-// src/constants/apiRoutes.js — DIPERBARUI
 export const BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
@@ -29,42 +28,37 @@ export const PACKAGES = {
 };
 
 export const BOOKINGS = {
-  LIST: `${BASE_URL}/bookings`,
   MY: `${BASE_URL}/bookings/my`,
   VENDOR_INBOX: `${BASE_URL}/bookings/vendor`,
   DETAIL: (id) => `${BASE_URL}/bookings/${id}`,
   CREATE: `${BASE_URL}/bookings`,
-  PAY_DP: (id) => `${BASE_URL}/bookings/${id}/pay-dp`,
-  PAY_FULL: (id) => `${BASE_URL}/bookings/${id}/pay-full`,
+  PAY: (id) => `${BASE_URL}/bookings/${id}/pay`, // endpoint tunggal
+  RESCHEDULE: (id) => `${BASE_URL}/bookings/${id}/reschedule`,
   RATE: (id) => `${BASE_URL}/bookings/${id}/rate`,
 };
 
-// Request vendor dari admin ke vendor
 export const VENDOR_REQUESTS = {
   CONFIRM: (id) => `${BASE_URL}/vendor-requests/${id}/confirm`,
   REJECT: (id) => `${BASE_URL}/vendor-requests/${id}/reject`,
 };
 
-// Admin workflow endpoints
 export const ADMIN = {
   STATS: `${BASE_URL}/admin/stats`,
   USERS: `${BASE_URL}/admin/users`,
   USER_DELETE: (id) => `${BASE_URL}/admin/users/${id}`,
   VENDORS: `${BASE_URL}/admin/vendors`,
+  VENDOR_CREATE: `${BASE_URL}/admin/vendors`,
+  VENDOR_UPDATE: (id) => `${BASE_URL}/admin/vendors/${id}`,
   VENDOR_APPROVE: (id) => `${BASE_URL}/admin/vendors/${id}/approve`,
   VENDOR_REJECT: (id) => `${BASE_URL}/admin/vendors/${id}/reject`,
+  VENDOR_DELETE: (id) => `${BASE_URL}/admin/vendors/${id}`,
   BOOKINGS: `${BASE_URL}/admin/bookings`,
-  // Workflow WO
   ASSIGN_VENDOR: (id) => `${BASE_URL}/admin/bookings/${id}/assign-vendor`,
   REASSIGN_VENDOR: (id) => `${BASE_URL}/admin/bookings/${id}/reassign-vendor`,
   TECH_MEETING: (id) => `${BASE_URL}/admin/bookings/${id}/tech-meeting`,
   CONFIRM_TECH: (id) => `${BASE_URL}/admin/bookings/${id}/confirm-tech-meeting`,
   PREPARATION: (id) => `${BASE_URL}/admin/bookings/${id}/preparation`,
   EXECUTE_EVENT: (id) => `${BASE_URL}/admin/bookings/${id}/execute-event`,
-};
-
-export const PAYMENT = {
-  NOTIFY: `${BASE_URL}/payment/notify`,
 };
 
 export const GALLERY = {

@@ -1,66 +1,83 @@
+// ============================================================
+// src/services/api.js — Axios instance untuk Laravel backend
+//
+// KONFIGURASI UNTUK LARAVEL:
+//   - Sanctum: token dikirim di Authorization: Bearer
+//   - CSRF: jika pakai session-based, uncomment bagian CSRF
+//   - Laravel returns { message, data, errors } pattern
+// ============================================================
 import axios from "axios";
 import { BASE_URL } from "../constants/apiRoutes";
 
-// ── 1. Buat instance Axios ───────────────────────────────────
-// axios.create() → membuat "kopi" axios dengan config default
 const api = axios.create({
-  baseURL: BASE_URL, // semua request prefix dengan ini
-  timeout: 15000, // batas waktu 15 detik
+  baseURL: BASE_URL,
+  timeout: 20000,
+  withCredentials: false, // Ganti true jika pakai Laravel Sanctum cookie
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",
+    "X-Requested-With": "XMLHttpRequest", // Laravel deteksi AJAX
   },
 });
 
-// ── 2. Request Interceptor ───────────────────────────────────
-// Dijalankan SEBELUM setiap request dikirim ke server
-// Tugasnya: sisipkan token JWT ke header Authorization
+// ── Request Interceptor ──────────────────────────────────────
+// Sisipkan Bearer token ke setiap request
 api.interceptors.request.use(
   (config) => {
-    // Ambil token dari localStorage
-    // localStorage: storage browser yg persisten (tidak hilang refresh)
     const token = localStorage.getItem("amaranta_token");
-
     if (token) {
-      // Bearer: skema autentikasi HTTP standar untuk JWT
-      // Format: "Authorization: Bearer <token>"
       config.headers.Authorization = `Bearer ${token}`;
     }
-
-    return config; // wajib return config agar request dilanjutkan
+    return config;
   },
-  (error) => {
-    // Jika ada error saat membuat request (mis: network down)
-    return Promise.reject(error);
-  },
+  (error) => Promise.reject(error),
 );
 
-// ── 3. Response Interceptor ──────────────────────────────────
-// Dijalankan SETELAH response diterima dari server
-// Tugasnya: handle error global (terutama 401 Unauthorized)
+// ── Response Interceptor ─────────────────────────────────────
+// Handle error global & Laravel error format
 api.interceptors.response.use(
   (response) => {
-    // Respons sukses (2xx): langsung teruskan
+    // Laravel biasanya return { data: {...}, message: '...' }
+    // Kita kembalikan langsung agar komponen bisa pakai response.data
     return response;
   },
   (error) => {
     const status = error.response?.status;
-    // ?. = optional chaining: tidak error jika response undefined
+    const message = error.response?.data?.message;
+    // Buat pesan error yang user-friendly dari Laravel response
+    if (error.response?.data?.errors) {
+      // Laravel validation error: { errors: { field: ['msg'] } }
+      const firstErrors = Object.values(error.response.data.errors);
+      error.userMessage = firstErrors.flat()[0] || "Data tidak valid";
+    } else if (message) {
+      error.userMessage = message;
+    } else if (status === 404) {
+      error.userMessage = "Data tidak ditemukan";
+    } else if (status === 403) {
+      error.userMessage = "Anda tidak memiliki akses";
+    } else if (status === 422) {
+      error.userMessage = "Data tidak valid, periksa kembali";
+    } else if (status >= 500) {
+      error.userMessage = "Terjadi kesalahan server. Coba beberapa saat lagi.";
+    } else if (!error.response) {
+      error.userMessage =
+        "Tidak bisa terhubung ke server. Periksa koneksi Anda.";
+    } else {
+      error.userMessage = "Terjadi kesalahan. Coba lagi.";
+    }
 
     if (status === 401) {
-      // Token expired atau tidak valid → hapus data auth & redirect
       localStorage.removeItem("amaranta_token");
-      localStorage.removeItem("amaranta_user");
-      // Redirect ke halaman login
-      window.location.href = "/login";
+      localStorage.removeItem("amaranta-auth");
+      // Hanya redirect jika bukan halaman login/daftar
+      if (
+        !window.location.pathname.includes("/masuk") &&
+        !window.location.pathname.includes("/daftar")
+      ) {
+        window.location.href = "/masuk";
+      }
     }
 
-    if (status === 403) {
-      // Forbidden: user login tapi tidak punya akses
-      console.warn("[API] 403 Forbidden — insufficient permissions");
-    }
-
-    // Teruskan error agar bisa di-catch di komponen/service
     return Promise.reject(error);
   },
 );

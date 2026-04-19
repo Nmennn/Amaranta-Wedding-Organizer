@@ -28,7 +28,7 @@ class AdminController extends Controller
                 'need_vendor'           => Booking::where('admin_status', 'waiting_vendor')->count(),
                 'vendor_rejected'       => Booking::where('admin_status', 'vendor_rejected')->count(),
                 'in_preparation'        => Booking::where('admin_status', 'preparation')->count(),
-                'dp_failed'             => Booking::where('admin_status', 'dp_failed')->count(),
+                'payment_failed'             => Booking::where('admin_status', 'payment_failed')->count(),
                 'pending_vendor_requests' => VendorRequest::where('status', 'pending')->count(),
             ],
         ]);
@@ -103,5 +103,81 @@ class AdminController extends Controller
             ->paginate(20);
 
         return response()->json($bookings);
+    }
+
+    // POST /api/admin/vendors — buat vendor baru (admin yang register vendor)
+    public function createVendor(Request $request): JsonResponse
+    {
+        $request->validate([
+            'name'     => 'required|string|max:255',
+            'email'    => 'required|email|unique:users,email',
+            'password' => 'required|string|min:8',
+            'category' => 'sometimes|string',
+            'location' => 'sometimes|string',
+        ]);
+
+        // Buat user dengan role vendor
+        $user = \App\Models\User::create([
+            'name'              => $request->name,
+            'email'             => $request->email,
+            'password'          => $request->password,
+            'role'              => 'vendor',
+            'email_verified_at' => now(),   // langsung verified karena dibuat admin
+            'is_active'         => true,
+        ]);
+
+        $slug = \Illuminate\Support\Str::slug($request->name) . '-' . $user->id;
+
+        $vendor = \App\Models\Vendor::create([
+            'user_id'     => $user->id,
+            'name'        => $request->name,
+            'slug'        => $slug,
+            'category'    => $request->category ?? 'Umum',
+            'location'    => $request->location ?? '',
+            'description' => $request->description ?? '',
+            'since'       => $request->since,
+            'img'         => $request->img,
+            'status'      => 'approved',   // admin buat = langsung approved
+        ]);
+
+        // Buat 3 paket default
+        foreach ([
+            ['silver', $request->price_silver ?? 25000000],
+            ['gold',   $request->price_gold   ?? 45000000],
+            ['platinum', $request->price_platinum ?? 85000000],
+        ] as [$tier, $price]) {
+            \App\Models\Package::create([
+                'vendor_id' => $vendor->id,
+                'tier_id'   => $tier,
+                'price'     => $price,
+                'is_active' => true,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Vendor berhasil dibuat.',
+            'data'    => $vendor->load('packages'),
+        ], 201);
+    }
+
+    // PUT /api/admin/vendors/{id} — update vendor
+    public function updateVendor(Request $request, \App\Models\Vendor $vendor): JsonResponse
+    {
+        $vendor->update($request->only([
+            'name', 'category', 'location', 'description', 'since', 'img',
+        ]));
+
+        // Update harga paket jika dikirim
+        foreach (['silver', 'gold', 'platinum'] as $tier) {
+            $key = 'price_' . $tier;
+            if ($request->has($key)) {
+                $vendor->packages()->where('tier_id', $tier)->update(['price' => $request->$key]);
+            }
+        }
+
+        return response()->json([
+            'message' => 'Vendor diperbarui.',
+            'data'    => $vendor->load('packages'),
+        ]);
     }
 }

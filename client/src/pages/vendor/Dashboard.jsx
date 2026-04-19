@@ -1,14 +1,9 @@
-// ============================================================
-// src/pages/vendor/Dashboard.jsx
-// Dashboard vendor — SEDERHANA, hanya untuk konfirmasi request
-// dari admin. Tidak ada pengelolaan paket atau profil.
-// ============================================================
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
 import Badge from "../../components/ui/Badge";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/ui/Modal";
 import useAuthStore from "../../store/authStore";
+import { vendorRequestService } from "../../services";
 import { formatRupiah } from "../../data/packages";
 
 const STATUS_V = {
@@ -22,108 +17,73 @@ const STATUS_L = {
   rejected: "Ditolak",
 };
 
-// Mock: semua vendor_requests yang masuk
-const MOCK_REQUESTS = [
-  {
-    id: 1,
-    status: "pending",
-    created_at: "2025-06-01T08:00:00",
-    assigned_by: { name: "Admin AMARANTA" },
-    booking: {
-      order_id: "AMRT-10012345",
-      customer: { name: "Rina & Budi", phone: "081234567890" },
-      package: { tier_id: "gold" },
-      wedding_date: "2025-09-15",
-      location: "Jakarta Selatan, Gedung Smesco",
-      konsep: "Garden Romantic — dominan hijau dan emas",
-      total_price: 45000000,
-      notes: "Butuh dekorasi bunga segar, tamu sekitar 150 orang",
-    },
-  },
-  {
-    id: 2,
-    status: "confirmed",
-    created_at: "2025-05-20T10:00:00",
-    responded_at: "2025-05-20T11:30:00",
-    assigned_by: { name: "Admin AMARANTA" },
-    booking: {
-      order_id: "AMRT-10012300",
-      customer: { name: "Maya & Reza" },
-      package: { tier_id: "silver" },
-      wedding_date: "2025-08-05",
-      location: "Surabaya, Harris Hotel",
-      konsep: "Rustic Outdoor",
-      total_price: 25000000,
-      notes: "",
-    },
-  },
-  {
-    id: 3,
-    status: "rejected",
-    created_at: "2025-05-15T09:00:00",
-    responded_at: "2025-05-15T10:00:00",
-    rejection_reason: "Tanggal tersebut sudah ada acara lain",
-    assigned_by: { name: "Admin AMARANTA" },
-    booking: {
-      order_id: "AMRT-10012288",
-      customer: { name: "Sari & Doni" },
-      package: { tier_id: "platinum" },
-      wedding_date: "2025-09-15",
-      location: "Bali",
-      konsep: "Tropical Luxury",
-      total_price: 85000000,
-      notes: "",
-    },
-  },
-];
-
-function VendorDashboard() {
+export default function VendorDashboard() {
   const user = useAuthStore((s) => s.user);
-  const [requests, setRequests] = useState(MOCK_REQUESTS);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
   const [vendorNotes, setVendorNotes] = useState("");
+  const [acting, setActing] = useState(false);
+
+  useEffect(() => {
+    vendorRequestService
+      .getInbox()
+      .then((data) => setRequests(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
   const pendingCount = requests.filter((r) => r.status === "pending").length;
   const confirmedCount = requests.filter(
     (r) => r.status === "confirmed",
   ).length;
 
-  function handleConfirm(req) {
-    // nanti: vendorRequestService.confirm(req.id, { vendor_notes: vendorNotes })
-    setRequests((prev) =>
-      prev.map((r) =>
-        r.id === req.id
-          ? {
-              ...r,
-              status: "confirmed",
-              responded_at: new Date().toISOString(),
-            }
-          : r,
-      ),
-    );
-    setDetail(null);
-    setVendorNotes("");
+  async function handleConfirm(req) {
+    setActing(true);
+    try {
+      await vendorRequestService.confirm(req.id, { vendor_notes: vendorNotes });
+      setRequests((p) =>
+        p.map((r) => (r.id === req.id ? { ...r, status: "confirmed" } : r)),
+      );
+      setDetail(null);
+      setVendorNotes("");
+    } catch {
+    } finally {
+      setActing(false);
+    }
   }
 
-  function handleReject() {
+  async function handleReject() {
     if (!rejectReason.trim()) return;
-    // nanti: vendorRequestService.reject(rejectModal.id, { rejection_reason: rejectReason })
-    setRequests((prev) =>
-      prev.map((r) =>
-        r.id === rejectModal.id
-          ? { ...r, status: "rejected", responded_at: new Date().toISOString() }
-          : r,
-      ),
-    );
-    setRejectModal(null);
-    setRejectReason("");
+    setActing(true);
+    try {
+      await vendorRequestService.reject(rejectModal.id, {
+        rejection_reason: rejectReason,
+      });
+      setRequests((p) =>
+        p.map((r) =>
+          r.id === rejectModal.id ? { ...r, status: "rejected" } : r,
+        ),
+      );
+      setRejectModal(null);
+      setRejectReason("");
+    } catch {
+    } finally {
+      setActing(false);
+    }
   }
+
+  if (loading)
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="w-8 h-8 border-2 border-[var(--color-gold)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
 
   return (
     <div>
-      {/* Header */}
       <div className="mb-8">
         <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-1">
           Panel Vendor
@@ -132,17 +92,17 @@ function VendorDashboard() {
           Halo, {user?.name?.split(" ")[0]}
         </h1>
         <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
-          Konfirmasi atau tolak request booking yang dikirim admin AMARANTA.
+          Konfirmasi atau tolak request booking dari admin AMARANTA.
         </p>
       </div>
 
-      {/* Ringkasan singkat */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4 mb-8">
         {[
           {
-            label: "Menunggu Respons",
+            label: "Menunggu",
             value: pendingCount,
-            color:
+            cls:
               pendingCount > 0 ? "text-amber-600" : "text-[var(--color-dark)]",
             bg:
               pendingCount > 0
@@ -152,187 +112,153 @@ function VendorDashboard() {
           {
             label: "Dikonfirmasi",
             value: confirmedCount,
-            color: "text-emerald-600",
+            cls: "text-emerald-600",
             bg: "bg-white border-[var(--color-cream-border)]",
           },
           {
             label: "Total Request",
             value: requests.length,
-            color: "text-[var(--color-dark)]",
+            cls: "text-[var(--color-dark)]",
             bg: "bg-white border-[var(--color-cream-border)]",
           },
-        ].map((item) => (
+        ].map((s) => (
           <div
-            key={item.label}
-            className={["border p-4 text-center", item.bg].join(" ")}
+            key={s.label}
+            className={["border p-4 text-center", s.bg].join(" ")}
           >
             <p
               className={[
                 "font-[var(--font-display)] text-3xl mb-1",
-                item.color,
+                s.cls,
               ].join(" ")}
             >
-              {item.value}
+              {s.value}
             </p>
-            <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] uppercase tracking-widest">
-              {item.label}
+            <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
+              {s.label}
             </p>
           </div>
         ))}
       </div>
 
-      {/* Alert: ada request pending */}
       {pendingCount > 0 && (
         <div className="mb-6 px-5 py-4 bg-amber-50 border border-amber-200 flex items-center gap-3">
           <span className="w-8 h-8 bg-amber-200 rounded-full flex items-center justify-center text-amber-700 font-bold flex-shrink-0">
             {pendingCount}
           </span>
-          <div>
-            <p className="text-sm font-medium text-amber-800 font-[var(--font-sans)]">
-              Ada {pendingCount} request baru yang menunggu respons Anda
-            </p>
-            <p className="text-xs text-amber-600 font-[var(--font-sans)]">
-              Harap merespons sesegera mungkin agar proses persiapan tidak
-              tertunda
-            </p>
-          </div>
+          <p className="text-sm font-medium text-amber-800 font-[var(--font-sans)]">
+            {pendingCount} request menunggu respons Anda
+          </p>
         </div>
       )}
 
-      {/* Daftar request */}
-      <div className="space-y-4">
-        {requests.map((req) => (
-          <div
-            key={req.id}
-            className={[
-              "bg-white border-2 p-5 transition-all",
-              req.status === "pending"
-                ? "border-amber-300 shadow-sm"
-                : "border-[var(--color-cream-border)]",
-            ].join(" ")}
-          >
-            {/* Header row */}
-            <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
-              <div>
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <Badge variant={STATUS_V[req.status]} dot>
-                    {STATUS_L[req.status]}
-                  </Badge>
-                  <span className="text-xs font-mono text-[var(--color-gold)] font-[var(--font-sans)]">
-                    {req.booking.order_id}
-                  </span>
-                  <span
-                    className={[
-                      "text-xs px-2 py-0.5 font-[var(--font-sans)]",
-                      {
-                        silver: "bg-gray-100 text-gray-600",
-                        gold: "bg-amber-50 text-amber-700",
-                        platinum: "bg-purple-50 text-purple-700",
-                      }[req.booking.package.tier_id] || "",
-                    ].join(" ")}
-                  >
-                    Paket{" "}
-                    {req.booking.package.tier_id.charAt(0).toUpperCase() +
-                      req.booking.package.tier_id.slice(1)}
-                  </span>
-                </div>
-                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
-                  Dari: {req.assigned_by.name} ·{" "}
-                  {new Date(req.created_at).toLocaleDateString("id-ID", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </p>
-              </div>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setDetail(req)}
-              >
-                Lihat Detail
-              </Button>
-            </div>
-
-            {/* Info acara */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-[var(--font-sans)] mb-4">
-              <div>
-                <p className="text-[var(--color-slate)]">Pasangan</p>
-                <p className="font-medium text-[var(--color-dark)]">
-                  {req.booking.customer.name}
-                </p>
-              </div>
-              <div>
-                <p className="text-[var(--color-slate)]">Tgl. Nikah</p>
-                <p className="font-medium text-[var(--color-dark)]">
-                  {req.booking.wedding_date}
-                </p>
-              </div>
-              <div>
-                <p className="text-[var(--color-slate)]">Lokasi</p>
-                <p className="font-medium text-[var(--color-dark)] truncate">
-                  {req.booking.location}
-                </p>
-              </div>
-              <div>
-                <p className="text-[var(--color-slate)]">Nilai</p>
-                <p className="font-medium text-[var(--color-gold)]">
-                  {formatRupiah(req.booking.total_price)}
-                </p>
-              </div>
-            </div>
-
-            {/* Konsep */}
-            <div className="px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-cream-border)] text-xs font-[var(--font-sans)] text-[var(--color-dark-muted)] mb-4">
-              🎨 {req.booking.konsep}
-              {req.booking.notes && <> · {req.booking.notes}</>}
-            </div>
-
-            {/* Tombol aksi — hanya untuk pending */}
-            {req.status === "pending" && (
-              <div className="flex gap-3 pt-3 border-t border-[var(--color-cream-border)]">
-                <Button variant="gold" size="sm" onClick={() => setDetail(req)}>
-                  ✅ Konfirmasi Kesanggupan
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => {
-                    setRejectModal(req);
-                    setRejectReason("");
-                  }}
-                >
-                  ❌ Tolak
-                </Button>
-              </div>
-            )}
-
-            {/* Info jika sudah ditolak */}
-            {req.status === "rejected" && req.rejection_reason && (
-              <div className="mt-3 px-3 py-2 bg-red-50 border border-red-100 text-xs text-red-600 font-[var(--font-sans)]">
-                Alasan penolakan: {req.rejection_reason}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {requests.length === 0 && (
+      {requests.length === 0 ? (
         <div className="text-center py-16">
           <p className="font-[var(--font-display)] text-2xl text-[var(--color-dark-subtle)] mb-2">
-            Belum ada request masuk
+            Belum ada request
           </p>
           <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
-            Admin akan mengirimkan request booking saat ada pesanan baru.
+            Admin akan mengirimkan request saat ada pesanan baru.
           </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {requests.map((req) => (
+            <div
+              key={req.id}
+              className={[
+                "bg-white border-2 p-5 transition-all",
+                req.status === "pending"
+                  ? "border-amber-300"
+                  : "border-[var(--color-cream-border)]",
+              ].join(" ")}
+            >
+              <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <Badge variant={STATUS_V[req.status]} dot>
+                      {STATUS_L[req.status]}
+                    </Badge>
+                    <span className="text-xs font-mono text-[var(--color-gold)] font-[var(--font-sans)]">
+                      {req.booking?.order_id}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
+                    Dari: {req.assigned_by?.name || "Admin AMARANTA"}
+                  </p>
+                </div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setDetail(req)}
+                >
+                  Lihat Detail
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-[var(--font-sans)] mb-3">
+                <div>
+                  <p className="text-[var(--color-slate)]">Pasangan</p>
+                  <p className="font-medium">{req.booking?.customer?.name}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-slate)]">Tgl. Nikah</p>
+                  <p className="font-medium">{req.booking?.wedding_date}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-slate)]">Lokasi</p>
+                  <p className="font-medium truncate">
+                    {req.booking?.location}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-slate)]">Nilai</p>
+                  <p className="font-medium text-[var(--color-gold)]">
+                    {formatRupiah(req.booking?.total_price)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-cream-border)] text-xs font-[var(--font-sans)] text-[var(--color-dark-muted)] mb-3">
+                🎨 {req.booking?.konsep}
+              </div>
+
+              {req.status === "pending" && (
+                <div className="flex gap-3 pt-3 border-t border-[var(--color-cream-border)]">
+                  <Button
+                    variant="gold"
+                    size="sm"
+                    onClick={() => setDetail(req)}
+                  >
+                    ✅ Konfirmasi
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      setRejectModal(req);
+                      setRejectReason("");
+                    }}
+                  >
+                    ❌ Tolak
+                  </Button>
+                </div>
+              )}
+              {req.status === "rejected" && req.rejection_reason && (
+                <div className="mt-2 px-3 py-2 bg-red-50 border border-red-100 text-xs text-red-600 font-[var(--font-sans)]">
+                  Alasan: {req.rejection_reason}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Modal detail + konfirmasi */}
+      {/* Modal Detail */}
       <Modal
         isOpen={!!detail}
         onClose={() => setDetail(null)}
-        title={detail ? "Detail Request — " + detail.booking.order_id : ""}
+        title={detail ? "Detail Request — " + detail.booking?.order_id : ""}
         size="lg"
         footer={
           detail?.status === "pending" ? (
@@ -350,9 +276,10 @@ function VendorDashboard() {
               <Button
                 variant="gold"
                 size="sm"
+                isLoading={acting}
                 onClick={() => handleConfirm(detail)}
               >
-                Konfirmasi Kesanggupan
+                Konfirmasi
               </Button>
             </>
           ) : undefined
@@ -362,57 +289,51 @@ function VendorDashboard() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: "Pasangan", value: detail.booking.customer.name },
-                { label: "Tgl. Nikah", value: detail.booking.wedding_date },
-                { label: "Lokasi", value: detail.booking.location },
-                { label: "Konsep", value: detail.booking.konsep },
+                { l: "Pasangan", v: detail.booking?.customer?.name },
+                { l: "Tgl. Nikah", v: detail.booking?.wedding_date },
+                { l: "Lokasi", v: detail.booking?.location },
+                { l: "Konsep", v: detail.booking?.konsep },
                 {
-                  label: "Paket",
-                  value: "Paket " + detail.booking.package.tier_id,
+                  l: "Paket",
+                  v: "Paket " + (detail.booking?.package?.tier_id || ""),
                 },
-                {
-                  label: "Nilai",
-                  value: formatRupiah(detail.booking.total_price),
-                },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="border border-[var(--color-cream-border)] p-3"
-                >
-                  <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
-                    {item.label}
-                  </p>
-                  <p className="text-sm font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
-                    {item.value}
-                  </p>
-                </div>
-              ))}
+                { l: "Nilai", v: formatRupiah(detail.booking?.total_price) },
+              ].map(({ l, v }) =>
+                v ? (
+                  <div
+                    key={l}
+                    className="border border-[var(--color-cream-border)] p-3"
+                  >
+                    <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
+                      {l}
+                    </p>
+                    <p className="text-sm font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+                      {v}
+                    </p>
+                  </div>
+                ) : null,
+              )}
             </div>
-
-            {detail.booking.notes && (
+            {detail.booking?.notes && (
               <div className="bg-[var(--color-cream)] p-3 border border-[var(--color-cream-border)]">
                 <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
-                  Catatan Customer
+                  Catatan
                 </p>
                 <p className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)]">
                   {detail.booking.notes}
                 </p>
               </div>
             )}
-
             {detail.status === "pending" && (
               <div>
                 <label className="text-sm font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] block mb-1.5">
-                  Catatan Konfirmasi{" "}
-                  <span className="text-[var(--color-slate)] font-normal">
-                    (opsional)
-                  </span>
+                  Catatan Konfirmasi (opsional)
                 </label>
                 <textarea
                   rows={2}
                   value={vendorNotes}
                   onChange={(e) => setVendorNotes(e.target.value)}
-                  placeholder="Catatan untuk admin, misal kesiapan tim, kondisi khusus..."
+                  placeholder="Catatan untuk admin..."
                   className="w-full border-b-2 border-[var(--color-cream-border)] focus:border-[var(--color-gold)] bg-transparent text-sm font-[var(--font-sans)] outline-none py-1 resize-none transition-colors"
                 />
               </div>
@@ -421,7 +342,7 @@ function VendorDashboard() {
         )}
       </Modal>
 
-      {/* Modal tolak */}
+      {/* Modal Tolak */}
       <Modal
         isOpen={!!rejectModal}
         onClose={() => setRejectModal(null)}
@@ -438,6 +359,7 @@ function VendorDashboard() {
             <Button
               variant="danger"
               size="sm"
+              isLoading={acting}
               onClick={handleReject}
               disabled={!rejectReason.trim()}
             >
@@ -449,19 +371,19 @@ function VendorDashboard() {
         {rejectModal && (
           <div className="space-y-4">
             <p className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)]">
-              Anda menolak request untuk{" "}
-              <strong>{rejectModal.booking.customer.name}</strong>. Admin akan
-              memilih vendor lain untuk booking ini.
+              Tolak request untuk{" "}
+              <strong>{rejectModal.booking?.customer?.name}</strong>. Admin akan
+              memilih vendor lain.
             </p>
             <div>
               <label className="text-sm font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] block mb-1.5">
-                Alasan Penolakan <span className="text-red-400">*</span>
+                Alasan <span className="text-red-400">*</span>
               </label>
               <textarea
                 rows={3}
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Contoh: Tanggal sudah terisi, lokasi terlalu jauh, kapasitas tidak memadai..."
+                placeholder="Tanggal sudah terisi, lokasi terlalu jauh..."
                 className="w-full border-b-2 border-[var(--color-cream-border)] focus:border-red-400 bg-transparent text-sm font-[var(--font-sans)] outline-none py-2 resize-none transition-colors"
               />
             </div>
@@ -471,5 +393,3 @@ function VendorDashboard() {
     </div>
   );
 }
-
-export default VendorDashboard;

@@ -3,6 +3,7 @@
 // ============================================================
 import { useNavigate } from "react-router-dom";
 import useAuthStore from "../store/authStore";
+import { toastSuccess, toastError } from "./useToast";
 
 function useAuth() {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ function useAuth() {
   // Login → navigasi ke dashboard sesuai role
   async function login(credentials) {
     const data = await storeLogin(credentials);
+    toastSuccess("Selamat datang, " + data.user.name.split(" ")[0] + "!");
     const role = data.user.role;
     if (role === "admin") navigate("/admin/dashboard");
     else if (role === "vendor") navigate("/vendor-panel/dashboard");
@@ -41,6 +43,7 @@ function useAuth() {
   // Logout → kembali ke beranda
   function logout() {
     storeLogout();
+    toastSuccess("Anda berhasil keluar.");
     navigate("/");
   }
 

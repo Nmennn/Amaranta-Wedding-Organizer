@@ -1,52 +1,72 @@
+/* stylelint-disable */
 /* ============================================================
-   amaranta — Global Styles
-   Tailwind v4: @import replaces @tailwind directives
-   @theme replaces tailwind.config.js `theme.extend`
+   AMARANTA Wedding Organizer — Global Styles (Tailwind v4)
    ============================================================ */
 
 @import "tailwindcss";
 
-/* ── Custom Design Tokens ─────────────────────────────────── */
+/* ── Design Tokens via @theme ────────────────────────────────
+   Mendefinisikan CSS variables yang otomatis jadi Tailwind utilities
+   Misal: --color-gold → bg-gold, text-gold, border-gold
+   ------------------------------------------------------------ */
 @theme {
-  /* Colors */
   --color-cream: #faf7f2;
   --color-cream-dark: #f0ebe1;
   --color-cream-border: #e5ddd0;
   --color-parchment: #ede5d8;
+  --color-ivory: #fffdf8;
+  --color-charcoal: #2a2825;
+
   --color-dark: #1c1a17;
   --color-dark-muted: #3d3a35;
   --color-dark-subtle: #6b6660;
+  --color-slate: #8a8480;
+
   --color-gold: #c9a96e;
   --color-gold-light: #dec28a;
   --color-gold-pale: #f0e4cc;
-  --color-ivory: #fffdf8;
-  --color-charcoal: #2a2825;
-  --color-slate: #8a8480;
 
-  /* Typography */
   --font-display: "Playfair Display", Georgia, serif;
   --font-serif: "Cormorant Garamond", Georgia, serif;
   --font-sans: "DM Sans", system-ui, sans-serif;
 
-  /* Spacing extras */
-  --spacing-18: 4.5rem;
-  --spacing-22: 5.5rem;
-  --spacing-88: 22rem;
-  --spacing-100: 25rem;
-  --spacing-120: 30rem;
-
-  /* Border radius */
-  --radius-2xl: 1rem;
-  --radius-3xl: 1.5rem;
-  --radius-4xl: 2rem;
-
-  /* Shadows */
   --shadow-luxury: 0 4px 40px rgba(28, 26, 23, 0.1);
   --shadow-card: 0 2px 20px rgba(28, 26, 23, 0.08);
   --shadow-gold: 0 4px 24px rgba(201, 169, 110, 0.25);
 }
 
-/* ── Base Reset & Globals ──────────────────────────────────── */
+/* ── CSS Custom Properties (:root) ──────────────────────────
+   Diperlukan agar var(--color-xxx) bekerja di JSX inline styles
+   dan komponen yang belum pakai kelas Tailwind.
+   Sinkron dengan @theme di atas.
+   ------------------------------------------------------------ */
+:root {
+  --color-cream: #faf7f2;
+  --color-cream-dark: #f0ebe1;
+  --color-cream-border: #e5ddd0;
+  --color-parchment: #ede5d8;
+  --color-ivory: #fffdf8;
+  --color-charcoal: #2a2825;
+
+  --color-dark: #1c1a17;
+  --color-dark-muted: #3d3a35;
+  --color-dark-subtle: #6b6660;
+  --color-slate: #8a8480;
+
+  --color-gold: #c9a96e;
+  --color-gold-light: #dec28a;
+  --color-gold-pale: #f0e4cc;
+
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "DM Sans", system-ui, sans-serif;
+
+  --shadow-luxury: 0 4px 40px rgba(28, 26, 23, 0.1);
+  --shadow-card: 0 2px 20px rgba(28, 26, 23, 0.08);
+  --shadow-gold: 0 4px 24px rgba(201, 169, 110, 0.25);
+}
+
+/* ── Base Reset ──────────────────────────────────────────────  */
 *,
 *::before,
 *::after {
@@ -67,7 +87,7 @@ body {
   line-height: 1.6;
 }
 
-/* ── Scrollbar styling ─────────────────────────────────────── */
+/* ── Scrollbar ───────────────────────────────────────────────  */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -79,7 +99,9 @@ body {
   border-radius: 3px;
 }
 
-/* ── Utility: Gold divider line ────────────────────────────── */
+/* ── Custom Utilities ────────────────────────────────────────  */
+
+/* Garis emas sebagai divider */
 .gold-rule {
   height: 1px;
   background: linear-gradient(
@@ -90,7 +112,44 @@ body {
   );
 }
 
-/* ── Utility: Fade-up animation ────────────────────────────── */
+/* Teks gradient emas berkilau */
+.text-gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-gold) 0%,
+    var(--color-gold-light) 40%,
+    var(--color-gold) 60%,
+    var(--color-gold-light) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 4s linear infinite;
+}
+
+/* Overlay gradient pada gambar */
+.img-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(28, 26, 23, 0.65) 0%,
+    transparent 60%
+  );
+  border-radius: inherit;
+}
+
+/* Scale on hover */
+.hover-scale {
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hover-scale:hover {
+  transform: scale(1.025);
+}
+
+/* ── Keyframe Animations ─────────────────────────────────────  */
 @keyframes fadeUp {
   from {
     opacity: 0;
@@ -101,7 +160,6 @@ body {
     transform: translateY(0);
   }
 }
-
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -110,7 +168,6 @@ body {
     opacity: 1;
   }
 }
-
 @keyframes shimmer {
   from {
     background-position: -200% center;
@@ -119,13 +176,46 @@ body {
     background-position: 200% center;
   }
 }
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
+/* Animation classes */
 .animate-fade-up {
   animation: fadeUp 0.7s ease forwards;
 }
-
 .animate-fade-in {
   animation: fadeIn 0.5s ease forwards;
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+.animate-slide-in {
+  animation: slide-in-right 0.3s ease forwards;
+}
+.animate-spin {
+  animation: spin 0.8s linear infinite;
 }
 
 .animate-delay-100 {
@@ -144,39 +234,47 @@ body {
   animation-delay: 0.5s;
 }
 
-/* ── Gold shimmer text ─────────────────────────────────────── */
-.text-gold-shimmer {
-  background: linear-gradient(
-    90deg,
-    var(--color-gold) 0%,
-    var(--color-gold-light) 40%,
-    var(--color-gold) 60%,
-    var(--color-gold-light) 100%
-  );
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: shimmer 4s linear infinite;
+/* Toast notification */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
 }
-
-/* ── Image overlay gradient ────────────────────────────────── */
-.img-overlay::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to top,
-    rgba(28, 26, 23, 0.65) 0%,
-    transparent 60%
-  );
-  border-radius: inherit;
+.toast {
+  padding: 12px 18px;
+  border-left: 3px solid;
+  background: white;
+  box-shadow: var(--shadow-luxury);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  max-width: 320px;
+  animation: slideToast 0.3s ease forwards;
+  pointer-events: all;
 }
-
-/* ── Hover scale on cards ──────────────────────────────────── */
-.hover-scale {
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+.toast-success {
+  border-color: #10b981;
+  color: #065f46;
 }
-.hover-scale:hover {
-  transform: scale(1.025);
+.toast-error {
+  border-color: #ef4444;
+  color: #991b1b;
+}
+.toast-info {
+  border-color: var(--color-gold);
+  color: var(--color-dark);
+}
+@keyframes slideToast {
+  from {
+    transform: translateX(110%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }

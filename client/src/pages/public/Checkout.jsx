@@ -1,838 +1,729 @@
-// ============================================================
-// src/pages/public/Checkout.jsx
-// Alur baru: Customer memilih paket → isi detail → bayar DP
-// TIDAK ada pemilihan vendor — admin yang menentukan vendor
-//
-// Field baru ke API:
-//   package_id     ← diambil dari item cart
-//   location       ← lokasi/kota acara (WAJIB, bukan bagian dari notes)
-//   konsep         ← tema pernikahan  (WAJIB, bukan bagian dari notes)
-// ============================================================
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import Navbar from "../../components/Navbar";
-import useCartStore from "../../store/cartStore";
-import useAuthStore from "../../store/authStore";
-import { PACKAGES, formatRupiah } from "../../data/packages";
+import { useState, useEffect, useCallback } from "react";
+import Badge from "../../components/ui/Badge";
 import Button from "../../components/ui/Button";
+import Modal from "../../components/ui/Modal";
 import Input from "../../components/ui/Input";
+import { adminService, vendorService } from "../../services";
+import { formatRupiah } from "../../data/packages";
 
-const PAYMENT_GROUPS = [
-  {
-    label: "Transfer Virtual Account",
-    methods: [
-      { id: "bca", name: "BCA Virtual Account", icon: "🏦" },
-      { id: "mandiri", name: "Mandiri Virtual Account", icon: "🏦" },
-      { id: "bni", name: "BNI Virtual Account", icon: "🏦" },
-      { id: "bri", name: "BRI Virtual Account", icon: "🏦" },
-    ],
-  },
-  {
-    label: "Dompet Digital",
-    methods: [
-      { id: "gopay", name: "GoPay", icon: "💚" },
-      { id: "ovo", name: "OVO", icon: "💜" },
-      { id: "dana", name: "DANA", icon: "💙" },
-      { id: "shopeepay", name: "ShopeePay", icon: "🟠" },
-    ],
-  },
-  {
-    label: "Lainnya",
-    methods: [
-      { id: "qris", name: "QRIS", icon: "📱" },
-      { id: "cc", name: "Kartu Kredit / Debit", icon: "💳" },
-    ],
-  },
-];
+const STATUS_STYLE = {
+  waiting_dp: "bg-gray-100 text-gray-500",
+  payment_failed: "bg-red-100 text-red-600",
+  waiting_vendor: "bg-amber-100 text-amber-700",
+  vendor_assigned: "bg-blue-100 text-blue-700",
+  vendor_confirmed: "bg-teal-100 text-teal-700",
+  vendor_rejected: "bg-red-100 text-red-600",
+  tech_meeting_scheduled: "bg-purple-100 text-purple-700",
+  preparation: "bg-indigo-100 text-indigo-700",
+  in_event: "bg-green-100 text-green-700",
+  completed: "bg-emerald-100 text-emerald-700",
+};
+const STATUS_LABEL = {
+  waiting_dp: "Menunggu Bayar",
+  payment_failed: "Bayar Gagal",
+  waiting_vendor: "Pilih Vendor",
+  vendor_assigned: "Menunggu Vendor",
+  vendor_confirmed: "Vendor Konfirm",
+  vendor_rejected: "Vendor Tolak",
+  tech_meeting_scheduled: "Tech Meeting",
+  preparation: "Persiapan",
+  in_event: "Hari H",
+  completed: "Selesai",
+};
 
-const snapReady = () =>
-  typeof window !== "undefined" && typeof window.snap !== "undefined";
-
-// ── Ringkasan Pesanan ─────────────────────────────────────────
-function OrderSummary({ items, total, dp, payType, setPayType }) {
-  const bayar = payType === "dp" ? dp : total;
-  return (
-    <div className="bg-white border border-[var(--color-cream-border)] p-6">
-      <h2 className="font-[var(--font-display)] text-xl text-[var(--color-dark)] mb-4">
-        Ringkasan Pesanan
-      </h2>
-
-      <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
-        {items.map((item) => {
-          const pkg = PACKAGES.find((p) => p.id === item.tierId);
-          return (
-            <div
-              key={item.cartId}
-              className="flex justify-between text-sm font-[var(--font-sans)] gap-2"
-            >
-              <span className="text-[var(--color-dark-muted)] truncate">
-                AMARANTA
-                <span className="ml-1 text-xs" style={{ color: pkg?.color }}>
-                  · Paket {item.tierLabel}
-                </span>
-              </span>
-              <span className="flex-shrink-0 font-medium">
-                {formatRupiah(item.price)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="gold-rule mb-4" />
-
-      {/* Toggle DP atau Lunas */}
-      {setPayType && (
-        <div className="mb-4">
-          <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] mb-2 font-medium">
-            Pilih Nominal Pembayaran:
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              {
-                val: "dp",
-                label: "DP 30%",
-                sub: formatRupiah(dp),
-                note: "Bayar sekarang",
-              },
-              {
-                val: "full",
-                label: "Lunas",
-                sub: formatRupiah(total),
-                note: "Hemat proses",
-              },
-            ].map(({ val, label, sub, note }) => (
-              <button
-                key={val}
-                onClick={() => setPayType(val)}
-                className={[
-                  "p-3 border text-left transition-all",
-                  payType === val
-                    ? "border-[var(--color-gold)] bg-[var(--color-gold-pale)]"
-                    : "border-[var(--color-cream-border)] hover:border-[var(--color-gold)]/50",
-                ].join(" ")}
-              >
-                <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
-                  {label}
-                </p>
-                <p className="font-[var(--font-display)] text-lg text-[var(--color-gold)]">
-                  {sub}
-                </p>
-                <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)]">
-                  {note}
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="flex justify-between items-baseline mt-3">
-        <span className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)]">
-          Dibayar sekarang
-        </span>
-        <span className="font-[var(--font-display)] text-2xl text-[var(--color-gold)]">
-          {formatRupiah(bayar)}
-        </span>
-      </div>
-      {payType === "dp" && (
-        <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-          Sisa {formatRupiah(total - dp)} dibayar setelah vendor dikonfirmasi
-        </p>
-      )}
-
-      {/* Info alur vendor */}
-      <div className="mt-4 p-3 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
-        <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
-          Alur Selanjutnya
-        </p>
-        <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] leading-relaxed">
-          Setelah DP masuk, tim AMARANTA akan memilih vendor terbaik untuk acara
-          Anda dan menghubungi Anda untuk tech meeting.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ── Field label reusable ──────────────────────────────────────
-function Field({ label, required, hint, error, children }) {
-  return (
-    <div>
-      <label className="text-sm font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] block mb-1.5">
-        {label}
-        {required && <span className="text-red-400 ml-0.5">*</span>}
-      </label>
-      {children}
-      {error && (
-        <p className="text-xs text-red-500 font-[var(--font-sans)] mt-1">
-          {error}
-        </p>
-      )}
-      {!error && hint && (
-        <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-          {hint}
-        </p>
-      )}
-    </div>
-  );
-}
-
-const fieldCls = (error) =>
-  [
-    "w-full border-b-2 bg-transparent py-2 text-sm font-[var(--font-sans)] text-[var(--color-dark)] outline-none transition-colors",
-    error
-      ? "border-red-400"
-      : "border-[var(--color-cream-border)] focus:border-[var(--color-gold)]",
-  ].join(" ");
-
-// ── Komponen Utama ────────────────────────────────────────────
-function Checkout() {
-  const items = useCartStore((s) => s.items);
-  const clearCart = useCartStore((s) => s.clearCart);
-  const user = useAuthStore((s) => s.user);
-  const token = useAuthStore((s) => s.token);
-  const navigate = useNavigate();
-
-  const [step, setStep] = useState(1);
-  const [method, setMethod] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [orderId, setOrderId] = useState("");
-  const [payType, setPayType] = useState("dp");
-  const [errors, setErrors] = useState({});
-  const [apiError, setApiError] = useState("");
-
-  const [form, setForm] = useState({
-    // Informasi pemesan
-    name: user?.name || "",
-    email: user?.email || "",
-    phone: user?.phone || "",
-    // Detail acara (field baru — dikirim ke backend sebagai kolom terpisah)
-    wedding_date: items[0]?.weddingDate || "",
-    location: "", // kota/venue — wajib, dikirim ke kolom `location`
-    konsep: "", // tema pernikahan — wajib, dikirim ke kolom `konsep`
-    guest_count: "", // perkiraan tamu — masuk notes
-    notes: "", // catatan lain
+// ── Panel workflow per booking ────────────────────────────────
+function WorkflowPanel({ booking, vendors, onUpdated }) {
+  const s = booking.admin_status;
+  const [assignVendorId, setAssignVendorId] = useState("");
+  const [adminNotes, setAdminNotes] = useState(booking.admin_notes || "");
+  const [techForm, setTechForm] = useState({
+    tech_meeting_at: "",
+    tech_meeting_location: "",
+    tech_meeting_notes: "",
   });
+  const [prepPct, setPrepPct] = useState(booking.preparation_progress || 0);
+  const [acting, setActing] = useState(false);
 
-  const total = items.reduce((a, i) => a + i.price, 0);
-  const dp = Math.round(total * 0.3);
-  const bayar = payType === "dp" ? dp : total;
-
-  const today = new Date().toISOString().split("T")[0];
-
-  function handleChange(e) {
-    setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
-    if (errors[e.target.name])
-      setErrors((p) => ({ ...p, [e.target.name]: "" }));
+  async function doAssign() {
+    if (!assignVendorId) return;
+    setActing(true);
+    try {
+      await adminService.assignVendor(booking.id, {
+        vendor_id: Number(assignVendorId),
+        admin_notes: adminNotes,
+      });
+      onUpdated();
+    } catch (err) {
+      alert(err.userMessage || "Gagal assign vendor");
+    } finally {
+      setActing(false);
+    }
   }
 
-  function validate() {
-    const e = {};
-    if (!form.name.trim()) e.name = "Nama wajib diisi";
-    if (!form.email.includes("@")) e.email = "Email tidak valid";
-    if (!form.phone.match(/^08/)) e.phone = "Format HP: 08xxxxxxxxxx";
-    if (!form.wedding_date) e.wedding_date = "Tanggal pernikahan wajib diisi";
-    if (!form.location.trim()) e.location = "Lokasi acara wajib diisi";
-    if (!form.konsep.trim()) e.konsep = "Konsep pernikahan wajib diisi";
-    setErrors(e);
-    return Object.keys(e).length === 0;
+  async function doReassign() {
+    if (!assignVendorId) return;
+    setActing(true);
+    try {
+      await adminService.reassignVendor(booking.id, {
+        vendor_id: Number(assignVendorId),
+      });
+      onUpdated();
+    } catch (err) {
+      alert(err.userMessage || "Gagal reassign vendor");
+    } finally {
+      setActing(false);
+    }
   }
 
-  const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
-  const authHeader = {
-    Authorization:
-      "Bearer " + (localStorage.getItem("amaranta_token") || token || ""),
-  };
-
-  async function handlePay() {
-    if (!method) {
-      setApiError("Pilih metode pembayaran.");
+  async function doTechMeeting() {
+    if (!techForm.tech_meeting_at || !techForm.tech_meeting_location) {
+      alert("Tanggal dan lokasi wajib diisi");
       return;
     }
-    setLoading(true);
-    setApiError("");
-
+    setActing(true);
     try {
-      // ── Buat booking ke backend ──────────────────────────────
-      // PERUBAHAN PENTING:
-      //   - Kirim package_id (bukan vendor_id)
-      //   - location dan konsep sebagai kolom terpisah
-      //   - vendor_id = null (diisi admin)
-      const packageId = items[0]?.tierId; // tierId = 'silver'|'gold'|'platinum'
-      // Cari package dari data lokal
-      const pkgData = PACKAGES.find((p) => p.id === packageId);
-
-      // Notes gabungan untuk info tambahan
-      const notesArr = [];
-      if (form.guest_count)
-        notesArr.push(`Perkiraan tamu: ${form.guest_count} orang`);
-      if (form.notes) notesArr.push(form.notes);
-
-      const bkRes = await fetch(API + "/bookings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...authHeader,
-        },
-        body: JSON.stringify({
-          // Package dipilih dari cart — backend cari package by tier_id atau id
-          package_id: items[0]?.packageId || pkgData?.id || packageId,
-          pemesan_name: form.name,
-          pemesan_email: form.email,
-          pemesan_phone: form.phone,
-          wedding_date: form.wedding_date,
-          location: form.location, // FIELD BARU — kolom terpisah di DB
-          konsep: form.konsep, // FIELD BARU — kolom terpisah di DB
-          notes: notesArr.join("\n") || null,
-          // vendor_id TIDAK dikirim — null secara default, diisi admin
-        }),
-      });
-
-      const bkData = await bkRes.json();
-      if (!bkRes.ok) {
-        // Tampilkan pesan validasi dari Laravel
-        if (bkData.errors) {
-          const firstErr = Object.values(bkData.errors).flat()[0];
-          setApiError(firstErr || "Data tidak valid.");
-        } else {
-          setApiError(bkData.message || "Gagal membuat booking.");
-        }
-        setLoading(false);
-        return;
-      }
-
-      const bookingId = bkData.data?.id;
-
-      // ── Minta Snap token Midtrans ────────────────────────────
-      const ep = payType === "dp" ? "pay-dp" : "pay-full";
-      const pyRes = await fetch(`${API}/bookings/${bookingId}/${ep}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...authHeader,
-        },
-      });
-      const pyData = await pyRes.json();
-      if (!pyRes.ok) {
-        setApiError(pyData.message || "Gagal proses bayar.");
-        setLoading(false);
-        return;
-      }
-
-      // ── Buka Midtrans Snap ───────────────────────────────────
-      if (snapReady()) {
-        window.snap.pay(pyData.snap_token, {
-          onSuccess: (r) => {
-            clearCart();
-            setOrderId(r.order_id || bkData.data?.order_id);
-            setLoading(false);
-            setStep(3);
-          },
-          onPending: () => {
-            setApiError("Menunggu konfirmasi pembayaran.");
-            setLoading(false);
-          },
-          onError: () => {
-            setApiError("Pembayaran gagal. Coba metode lain.");
-            setLoading(false);
-          },
-          onClose: () => setLoading(false),
-        });
-      } else {
-        // Simulasi untuk development (Snap.js belum dimuat)
-        setTimeout(() => {
-          clearCart();
-          setOrderId(
-            bkData.data?.order_id ||
-              "AMRT-DEMO-" + Date.now().toString().slice(-6),
-          );
-          setLoading(false);
-          setStep(3);
-        }, 1500);
-      }
-    } catch {
-      setApiError("Tidak bisa terhubung ke server.");
-      setLoading(false);
+      await adminService.setTechMeeting(booking.id, techForm);
+      onUpdated();
+    } catch (err) {
+      alert(err.userMessage || "Gagal atur tech meeting");
+    } finally {
+      setActing(false);
     }
   }
 
-  // Keranjang kosong
-  if (items.length === 0 && step !== 3) {
-    return (
-      <div className="min-h-screen bg-[var(--color-cream)]">
-        <Navbar />
-        <div className="max-w-3xl mx-auto px-6 py-24 text-center">
-          <h2 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)] mb-4">
-            Belum Ada Paket Dipilih
-          </h2>
-          <Link
-            to="/paket"
-            className="text-[var(--color-gold)] hover:underline font-[var(--font-sans)]"
-          >
-            Pilih paket →
-          </Link>
-        </div>
-      </div>
-    );
+  async function doConfirmTech() {
+    setActing(true);
+    try {
+      await adminService.confirmTech(booking.id);
+      onUpdated();
+    } catch (err) {
+      alert(err.userMessage || "Gagal");
+    } finally {
+      setActing(false);
+    }
   }
 
+  async function doUpdatePrep() {
+    setActing(true);
+    try {
+      await adminService.updatePreparation(booking.id, prepPct);
+      onUpdated();
+    } catch (err) {
+      alert(err.userMessage || "Gagal");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function doExecute() {
+    if (!window.confirm("Tandai acara sedang berlangsung?")) return;
+    setActing(true);
+    try {
+      await adminService.executeEvent(booking.id);
+      onUpdated();
+    } catch (err) {
+      alert(
+        err.userMessage || "Gagal eksekusi. Pastikan pembayaran sudah lunas.",
+      );
+    } finally {
+      setActing(false);
+    }
+  }
+
+  const STEPS = [
+    "Bayar",
+    "Pilih Vendor",
+    "Tech Meeting",
+    "Persiapan",
+    "Eksekusi",
+  ];
+  const STEP_STATUS = [
+    "waiting_vendor",
+    "vendor_assigned",
+    "vendor_confirmed",
+    "tech_meeting_scheduled",
+    "preparation",
+    "in_event",
+  ];
+  const curIdx = STEP_STATUS.indexOf(s);
+
   return (
-    <div className="min-h-screen bg-[var(--color-cream)]">
-      <Navbar />
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-12 py-8">
-        {/* Step indicator */}
-        {step < 3 && (
-          <div className="flex items-center gap-2 mb-10">
-            {["Detail Pemesanan", "Metode Bayar", "Konfirmasi"].map(
-              (label, i) => (
-                <div key={label} className="flex items-center gap-2">
-                  <div
-                    className={[
-                      "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold font-[var(--font-sans)] transition-all",
-                      step > i + 1
-                        ? "bg-emerald-500 text-white"
-                        : step === i + 1
-                          ? "bg-[var(--color-gold)] text-[var(--color-dark)]"
-                          : "bg-[var(--color-cream-border)] text-[var(--color-slate)]",
-                    ].join(" ")}
-                  >
-                    {step > i + 1 ? "✓" : i + 1}
-                  </div>
-                  <span
-                    className={[
-                      "text-xs font-[var(--font-sans)] uppercase tracking-widest hidden sm:inline",
-                      step >= i + 1
-                        ? "text-[var(--color-dark)]"
-                        : "text-[var(--color-slate)]",
-                    ].join(" ")}
-                  >
-                    {label}
-                  </span>
-                  {i < 2 && (
-                    <div
-                      className={[
-                        "h-px w-5 sm:w-8 transition-all",
-                        step > i + 1
-                          ? "bg-emerald-500"
-                          : "bg-[var(--color-cream-border)]",
-                      ].join(" ")}
-                    />
-                  )}
-                </div>
-              ),
+    <div className="mt-5 border-t border-[var(--color-cream-border)] pt-5 space-y-4">
+      <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
+        Workflow WO
+      </p>
+
+      {/* Progress steps */}
+      <div className="flex items-center gap-1 flex-wrap">
+        {STEPS.map((step, i) => (
+          <div key={step} className="flex items-center gap-1">
+            <span
+              className={[
+                "text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]",
+                i <= curIdx
+                  ? "bg-[var(--color-gold)] text-[var(--color-dark)]"
+                  : "bg-[var(--color-cream-border)] text-[var(--color-slate)]",
+              ].join(" ")}
+            >
+              {step}
+            </span>
+            {i < STEPS.length - 1 && (
+              <span className="text-[var(--color-cream-border)] text-xs">
+                ›
+              </span>
             )}
           </div>
-        )}
-
-        {/* ── STEP 1: Detail Pemesanan ── */}
-        {step === 1 && (
-          <div className="grid lg:grid-cols-5 gap-8">
-            <div className="lg:col-span-3 space-y-6">
-              <h1 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)]">
-                Detail Pemesanan
-              </h1>
-
-              {/* Blok 1: Info kontak */}
-              <div className="bg-white border border-[var(--color-cream-border)] p-6">
-                <h2 className="text-xs uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-5 pb-3 border-b border-[var(--color-cream-border)]">
-                  Informasi Kontak
-                </h2>
-                <div className="space-y-4">
-                  <Input
-                    label="Nama Lengkap Pemesan"
-                    name="name"
-                    value={form.name}
-                    onChange={handleChange}
-                    required
-                    error={errors.name}
-                  />
-                  <Input
-                    label="Email"
-                    type="email"
-                    name="email"
-                    value={form.email}
-                    onChange={handleChange}
-                    required
-                    error={errors.email}
-                    hint="Konfirmasi booking & update dari admin dikirim ke sini"
-                  />
-                  <Input
-                    label="No. HP / WhatsApp"
-                    type="tel"
-                    name="phone"
-                    value={form.phone}
-                    onChange={handleChange}
-                    required
-                    error={errors.phone}
-                    placeholder="08xxxxxxxxxx"
-                    hint="Tim AMARANTA menghubungi lewat nomor ini"
-                  />
-                </div>
-              </div>
-
-              {/* Blok 2: Detail acara */}
-              <div className="bg-white border border-[var(--color-cream-border)] p-6">
-                <div className="mb-5 pb-3 border-b border-[var(--color-cream-border)]">
-                  <h2 className="text-xs uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
-                    Detail Acara
-                  </h2>
-                  <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
-                    Digunakan tim AMARANTA untuk memilih vendor dan menyiapkan
-                    acara Anda.
-                  </p>
-                </div>
-
-                <div className="space-y-5">
-                  {/* Tanggal */}
-                  <Field
-                    label="Tanggal Pernikahan"
-                    required
-                    error={errors.wedding_date}
-                  >
-                    <input
-                      type="date"
-                      name="wedding_date"
-                      value={form.wedding_date}
-                      onChange={handleChange}
-                      min={today}
-                      className={fieldCls(errors.wedding_date)}
-                    />
-                  </Field>
-
-                  {/* Lokasi */}
-                  <Field
-                    label="Lokasi Acara"
-                    required
-                    error={errors.location}
-                    hint="Kota dan nama gedung/venue jika sudah ada"
-                  >
-                    <input
-                      type="text"
-                      name="location"
-                      value={form.location}
-                      onChange={handleChange}
-                      placeholder="contoh: Jakarta Selatan, Gedung Smesco"
-                      className={fieldCls(errors.location)}
-                    />
-                  </Field>
-
-                  {/* Konsep */}
-                  <Field
-                    label="Konsep / Tema Pernikahan"
-                    required
-                    error={errors.konsep}
-                    hint="Tema warna, gaya dekorasi, atau suasana yang diinginkan"
-                  >
-                    <input
-                      type="text"
-                      name="konsep"
-                      value={form.konsep}
-                      onChange={handleChange}
-                      placeholder="contoh: Garden Romantic, Rustic Outdoor, Modern Minimalist"
-                      className={fieldCls(errors.konsep)}
-                    />
-                  </Field>
-
-                  {/* Jumlah tamu + catatan (tidak wajib) */}
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <Field label="Perkiraan Jumlah Tamu">
-                      <input
-                        type="number"
-                        name="guest_count"
-                        value={form.guest_count}
-                        onChange={handleChange}
-                        placeholder="contoh: 150"
-                        min="1"
-                        className={fieldCls(false)}
-                      />
-                    </Field>
-
-                    <Field label="Catatan Tambahan">
-                      <input
-                        type="text"
-                        name="notes"
-                        value={form.notes}
-                        onChange={handleChange}
-                        placeholder="Permintaan khusus..."
-                        className={fieldCls(false)}
-                      />
-                    </Field>
-                  </div>
-                </div>
-              </div>
-
-              {apiError && (
-                <div className="px-4 py-3 bg-red-50 border border-red-200 text-sm text-red-600 font-[var(--font-sans)]">
-                  ⚠️ {apiError}
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <Button
-                  variant="gold"
-                  size="lg"
-                  onClick={() => {
-                    if (validate()) setStep(2);
-                  }}
-                >
-                  Lanjut ke Pembayaran →
-                </Button>
-              </div>
-            </div>
-
-            <div className="lg:col-span-2">
-              <div className="sticky top-20">
-                <OrderSummary
-                  items={items}
-                  total={total}
-                  dp={dp}
-                  payType={payType}
-                  setPayType={setPayType}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 2: Metode Bayar ── */}
-        {step === 2 && (
-          <div className="grid lg:grid-cols-5 gap-8">
-            <div className="lg:col-span-3">
-              <h1 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)] mb-6">
-                Metode Pembayaran
-              </h1>
-
-              {/* Badge Midtrans */}
-              <div className="mb-5 px-4 py-3 bg-blue-50 border border-blue-100 flex items-center gap-3">
-                <span className="text-xl flex-shrink-0">🔒</span>
-                <div>
-                  <p className="text-xs font-medium text-blue-800 font-[var(--font-sans)]">
-                    Diamankan oleh Midtrans
-                  </p>
-                  <p className="text-xs text-blue-500 font-[var(--font-sans)]">
-                    {snapReady() ? "✅ Snap siap" : "⚠️ Mode simulasi (dev)"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Ringkasan detail acara */}
-              <div className="mb-5 bg-[var(--color-cream)] border border-[var(--color-cream-border)] p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
-                    Ringkasan Acara
-                  </p>
-                  <button
-                    onClick={() => setStep(1)}
-                    className="text-xs text-[var(--color-gold)] hover:underline font-[var(--font-sans)]"
-                  >
-                    ✎ Edit
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-[var(--font-sans)]">
-                  {[
-                    { label: "Pemesan", value: form.name },
-                    { label: "Tanggal", value: form.wedding_date },
-                    { label: "Lokasi", value: form.location },
-                    { label: "Konsep", value: form.konsep },
-                    form.guest_count && {
-                      label: "Tamu",
-                      value: form.guest_count + " orang",
-                    },
-                  ]
-                    .filter(Boolean)
-                    .map(({ label, value }) => (
-                      <div key={label} className="flex gap-1">
-                        <span className="text-[var(--color-slate)] flex-shrink-0">
-                          {label}:
-                        </span>
-                        <span className="text-[var(--color-dark)] font-medium truncate">
-                          {value}
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* Pilihan metode bayar */}
-              {apiError && (
-                <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-sm text-red-600 font-[var(--font-sans)]">
-                  ⚠️ {apiError}
-                </div>
-              )}
-
-              <div className="bg-white border border-[var(--color-cream-border)] p-5 space-y-5 mb-5">
-                {PAYMENT_GROUPS.map((group) => (
-                  <div key={group.label}>
-                    <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-2">
-                      {group.label}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {group.methods.map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => {
-                            setMethod(m.id);
-                            setApiError("");
-                          }}
-                          className={[
-                            "flex items-center gap-2 p-3 border text-left transition-all",
-                            method === m.id
-                              ? "border-[var(--color-gold)] bg-[var(--color-gold-pale)]"
-                              : "border-[var(--color-cream-border)] hover:border-[var(--color-gold)]/50",
-                          ].join(" ")}
-                        >
-                          <span className="text-base flex-shrink-0">
-                            {m.icon}
-                          </span>
-                          <span className="text-xs text-[var(--color-dark)] font-[var(--font-sans)] leading-tight">
-                            {m.name}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between">
-                <button
-                  onClick={() => setStep(1)}
-                  className="text-xs text-[var(--color-slate)] hover:text-[var(--color-dark)] font-[var(--font-sans)] transition-colors"
-                >
-                  ← Kembali
-                </button>
-                <Button
-                  variant="gold"
-                  size="lg"
-                  isLoading={loading}
-                  onClick={handlePay}
-                  disabled={!method}
-                >
-                  Bayar {formatRupiah(bayar)}
-                </Button>
-              </div>
-            </div>
-
-            <div className="lg:col-span-2">
-              <div className="sticky top-20">
-                <OrderSummary
-                  items={items}
-                  total={total}
-                  dp={dp}
-                  payType={payType}
-                  setPayType={null}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 3: Sukses ── */}
-        {step === 3 && (
-          <div className="max-w-lg mx-auto text-center py-16">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <svg
-                className="w-10 h-10 text-emerald-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </div>
-
-            <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-3">
-              Pembayaran Berhasil
-            </p>
-            <h1 className="font-[var(--font-display)] text-4xl text-[var(--color-dark)] mb-3">
-              Pesanan Dikonfirmasi!
-            </h1>
-            <p className="font-[var(--font-display)] text-2xl text-[var(--color-gold)] mb-2 tracking-widest">
-              {orderId}
-            </p>
-            <p className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)] mb-8 leading-relaxed">
-              Konfirmasi dikirim ke <strong>{form.email}</strong>. Tim AMARANTA
-              akan menghubungi Anda di <strong>{form.phone}</strong>
-              dalam 1×24 jam untuk koordinasi lebih lanjut.
-            </p>
-
-            {/* Ringkasan acara di halaman sukses */}
-            <div className="bg-white border border-[var(--color-cream-border)] p-5 mb-8 text-left">
-              <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-3">
-                Detail Acara Anda
-              </p>
-              <div className="space-y-2 text-sm font-[var(--font-sans)]">
-                {[
-                  { label: "Tanggal", value: form.wedding_date },
-                  { label: "Lokasi", value: form.location },
-                  { label: "Konsep", value: form.konsep },
-                  form.guest_count && {
-                    label: "Tamu",
-                    value: form.guest_count + " orang",
-                  },
-                ]
-                  .filter(Boolean)
-                  .map(({ label, value }) => (
-                    <div key={label} className="flex gap-2">
-                      <span className="text-[var(--color-slate)] w-20 flex-shrink-0">
-                        {label}
-                      </span>
-                      <span className="text-[var(--color-dark)] font-medium">
-                        {value}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-[var(--color-cream-border)]">
-                <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-2">
-                  Langkah Selanjutnya
-                </p>
-                <div className="space-y-2">
-                  {[
-                    "① Tim AMARANTA memilih vendor terbaik untuk acara Anda",
-                    "② Anda akan dihubungi untuk tech meeting",
-                    "③ Lakukan pelunasan setelah vendor dikonfirmasi",
-                    "④ Nikmati hari spesial Anda — kami urus sisanya!",
-                  ].map((step) => (
-                    <p
-                      key={step}
-                      className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]"
-                    >
-                      {step}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Link
-                to="/pelanggan/pemesanan"
-                className="px-8 py-3.5 bg-[var(--color-dark)] text-[var(--color-cream)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:bg-[var(--color-charcoal)] transition-colors"
-              >
-                Lihat Pemesanan Saya
-              </Link>
-              <Link
-                to="/"
-                className="px-8 py-3.5 border border-[var(--color-dark-muted)]/30 text-[var(--color-dark-muted)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:border-[var(--color-dark)] transition-colors"
-              >
-                Kembali ke Beranda
-              </Link>
-            </div>
-          </div>
-        )}
+        ))}
       </div>
+
+      {/* Assign vendor */}
+      {(s === "waiting_vendor" || s === "vendor_rejected") && (
+        <div className="space-y-3 p-4 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+          <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+            {s === "vendor_rejected"
+              ? "🔄 Pilih Vendor Pengganti"
+              : "👤 Assign Vendor"}
+          </p>
+          <select
+            value={assignVendorId}
+            onChange={(e) => setAssignVendorId(e.target.value)}
+            className="w-full border border-[var(--color-cream-border)] px-3 py-2 text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] bg-white"
+          >
+            <option value="">-- Pilih vendor --</option>
+            {vendors
+              .filter((v) => v.status === "approved")
+              .map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.category || "Umum"})
+                </option>
+              ))}
+          </select>
+          <Input
+            label="Catatan untuk Vendor (opsional)"
+            value={adminNotes}
+            onChange={(e) => setAdminNotes(e.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="gold"
+            isLoading={acting}
+            disabled={!assignVendorId}
+            onClick={s === "vendor_rejected" ? doReassign : doAssign}
+          >
+            {s === "vendor_rejected" ? "Assign Vendor Baru" : "Assign Vendor"}
+          </Button>
+        </div>
+      )}
+
+      {/* Tech meeting */}
+      {s === "vendor_confirmed" && (
+        <div className="space-y-3 p-4 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+          <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+            📅 Jadwalkan Tech Meeting
+          </p>
+          <Input
+            label="Tanggal & Waktu"
+            type="datetime-local"
+            value={techForm.tech_meeting_at}
+            onChange={(e) =>
+              setTechForm((p) => ({ ...p, tech_meeting_at: e.target.value }))
+            }
+          />
+          <Input
+            label="Lokasi Meeting"
+            value={techForm.tech_meeting_location}
+            onChange={(e) =>
+              setTechForm((p) => ({
+                ...p,
+                tech_meeting_location: e.target.value,
+              }))
+            }
+            placeholder="Zoom / Kantor AMARANTA / ..."
+          />
+          <Input
+            label="Catatan (opsional)"
+            value={techForm.tech_meeting_notes}
+            onChange={(e) =>
+              setTechForm((p) => ({ ...p, tech_meeting_notes: e.target.value }))
+            }
+          />
+          <Button
+            size="sm"
+            variant="gold"
+            isLoading={acting}
+            onClick={doTechMeeting}
+          >
+            Jadwalkan
+          </Button>
+        </div>
+      )}
+
+      {/* Konfirmasi tech meeting */}
+      {s === "tech_meeting_scheduled" && (
+        <div className="flex items-center gap-3 p-3 bg-purple-50 border border-purple-200">
+          <div>
+            <p className="text-xs font-medium text-purple-800 font-[var(--font-sans)]">
+              Tech Meeting:{" "}
+              {booking.tech_meeting_at
+                ? new Date(booking.tech_meeting_at).toLocaleString("id-ID")
+                : "—"}
+            </p>
+            <p className="text-xs text-purple-600 font-[var(--font-sans)]">
+              Lokasi: {booking.tech_meeting_location || "—"}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="gold"
+            isLoading={acting}
+            onClick={doConfirmTech}
+          >
+            ✅ Konfirmasi Sudah Terlaksana
+          </Button>
+        </div>
+      )}
+
+      {/* Update progress */}
+      {s === "preparation" && (
+        <div className="space-y-3 p-4 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+              📊 Progress Persiapan: {prepPct}%
+            </p>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={prepPct}
+            onChange={(e) => setPrepPct(Number(e.target.value))}
+            className="w-full"
+          />
+          <div className="h-2 bg-[var(--color-cream-border)] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-[var(--color-gold)] rounded-full transition-all"
+              style={{ width: prepPct + "%" }}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              isLoading={acting}
+              onClick={doUpdatePrep}
+            >
+              Simpan Progress
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              isLoading={acting}
+              onClick={doExecute}
+            >
+              🚀 Eksekusi Acara
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Info detail acara */}
+      <div className="grid grid-cols-2 gap-2 text-xs font-[var(--font-sans)]">
+        {[
+          { l: "Tgl. Nikah", v: booking.wedding_date },
+          { l: "Lokasi", v: booking.location },
+          { l: "Konsep", v: booking.konsep },
+          { l: "Total", v: formatRupiah(booking.total_price) },
+        ]
+          .filter((x) => x.v)
+          .map(({ l, v }) => (
+            <div key={l}>
+              <span className="text-[var(--color-slate)]">{l}: </span>
+              <span className="text-[var(--color-dark)] font-medium">{v}</span>
+            </div>
+          ))}
+      </div>
+
+      {/* Riwayat vendor request */}
+      {booking.vendor_requests?.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-2">
+            Riwayat Vendor
+          </p>
+          {booking.vendor_requests.map((vr, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 py-1.5 border-b border-[var(--color-cream-border)] last:border-0"
+            >
+              <span
+                className={[
+                  "text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]",
+                  vr.status === "confirmed"
+                    ? "bg-green-100 text-green-700"
+                    : vr.status === "rejected"
+                      ? "bg-red-100 text-red-600"
+                      : "bg-amber-100 text-amber-700",
+                ].join(" ")}
+              >
+                {vr.status}
+              </span>
+              <span className="text-xs text-[var(--color-dark)] font-[var(--font-sans)]">
+                {vr.vendor?.name || "—"}
+              </span>
+              {vr.rejection_reason && (
+                <span className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] truncate">
+                  — {vr.rejection_reason}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-export default Checkout;
+// ── Halaman Utama ─────────────────────────────────────────────
+export default function AdminBookings() {
+  const [bookings, setBookings] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [detail, setDetail] = useState(null);
+  const PER_PAGE = 8;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [bData, vData] = await Promise.all([
+        adminService.getBookings(),
+        adminService.getVendors(),
+      ]);
+      setBookings(Array.isArray(bData) ? bData : bData.data || []);
+      setVendors(Array.isArray(vData) ? vData : vData.data || []);
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Refresh detail jika sedang dibuka
+  async function handleUpdated() {
+    await load();
+    if (detail) {
+      setDetail((prev) => {
+        const fresh = bookings.find((b) => b.id === prev?.id);
+        return fresh || prev;
+      });
+    }
+  }
+
+  const needAction = bookings.filter((b) =>
+    ["waiting_vendor", "vendor_rejected", "vendor_confirmed"].includes(
+      b.admin_status,
+    ),
+  ).length;
+
+  const filtered = bookings
+    .filter((b) => filter === "all" || b.admin_status === filter)
+    .filter(
+      (b) =>
+        !search ||
+        b.order_id?.includes(search) ||
+        b.pemesan_name?.toLowerCase().includes(search.toLowerCase()) ||
+        b.location?.toLowerCase().includes(search.toLowerCase()),
+    );
+
+  const totalPages = Math.ceil(filtered.length / PER_PAGE);
+  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)] mb-1">
+          Manajemen Booking
+        </h1>
+        <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
+          Kelola booking sebagai Wedding Organizer — assign vendor, tech
+          meeting, persiapan.
+        </p>
+      </div>
+
+      {/* Alert butuh aksi */}
+      {needAction > 0 && (
+        <div className="mb-5 flex items-center justify-between px-5 py-4 bg-amber-50 border border-amber-200">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 bg-amber-200 rounded-full flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
+              {needAction}
+            </span>
+            <p className="text-sm font-medium text-amber-800 font-[var(--font-sans)]">
+              {needAction} booking perlu tindakan Anda
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setFilter("waiting_vendor");
+              setPage(1);
+            }}
+            className="text-xs text-amber-700 hover:underline font-[var(--font-sans)]"
+          >
+            Lihat →
+          </button>
+        </div>
+      )}
+
+      {/* Filter + Search */}
+      <div className="flex flex-wrap gap-3 mb-6">
+        <input
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          placeholder="Cari order ID, nama, lokasi..."
+          className="flex-1 min-w-[200px] px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors"
+        />
+        {[
+          { val: "all", label: "Semua" },
+          { val: "waiting_vendor", label: "Pilih Vendor" },
+          { val: "vendor_assigned", label: "Menunggu Vendor" },
+          { val: "vendor_confirmed", label: "Vendor Konfirm" },
+          { val: "preparation", label: "Persiapan" },
+          { val: "in_event", label: "Hari H" },
+        ].map((f) => (
+          <button
+            key={f.val}
+            onClick={() => {
+              setFilter(f.val);
+              setPage(1);
+            }}
+            className={[
+              "px-3 py-2 text-xs uppercase tracking-widest font-[var(--font-sans)] border transition-all",
+              filter === f.val
+                ? "bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]"
+                : "bg-white border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]",
+            ].join(" ")}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tabel */}
+      {loading ? (
+        <div className="text-center py-20">
+          <div className="inline-block w-8 h-8 border-2 border-[var(--color-gold)] border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
+          <div className="bg-white border border-[var(--color-cream-border)] overflow-hidden mb-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm font-[var(--font-sans)]">
+                <thead>
+                  <tr className="bg-[var(--color-cream)] border-b border-[var(--color-cream-border)]">
+                    {[
+                      "Order",
+                      "Pemesan",
+                      "Paket",
+                      "Tgl Acara",
+                      "Lokasi",
+                      "Vendor",
+                      "Status",
+                      "Progress",
+                      "",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left px-4 py-3 text-[10px] uppercase tracking-widest text-[var(--color-slate)] whitespace-nowrap"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginated.map((b) => (
+                    <tr
+                      key={b.id}
+                      className="border-b border-[var(--color-cream-border)] last:border-0 hover:bg-[var(--color-cream)] transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <p className="text-xs font-mono text-[var(--color-gold)]">
+                          {b.order_id}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-[var(--color-dark)]">
+                          {b.pemesan_name}
+                        </p>
+                        <p className="text-xs text-[var(--color-slate)]">
+                          {b.pemesan_phone}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={[
+                            "text-xs px-2 py-0.5 rounded capitalize",
+                            {
+                              silver: "bg-gray-100 text-gray-600",
+                              gold: "bg-amber-50 text-amber-700",
+                              platinum: "bg-purple-50 text-purple-700",
+                            }[b.package?.tier_id] ||
+                              "bg-gray-100 text-gray-600",
+                          ].join(" ")}
+                        >
+                          {b.package?.tier_id || "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-dark-muted)] whitespace-nowrap">
+                        {b.wedding_date || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-slate)] max-w-[120px] truncate">
+                        {b.location || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-[var(--color-dark-muted)]">
+                        {b.vendor?.name || (
+                          <span className="text-[var(--color-slate)] italic">
+                            Belum
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={[
+                            "text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]",
+                            STATUS_STYLE[b.admin_status] ||
+                              "bg-gray-100 text-gray-500",
+                          ].join(" ")}
+                        >
+                          {STATUS_LABEL[b.admin_status] || b.admin_status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {b.preparation_progress > 0 && (
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-1.5 bg-[var(--color-cream-border)] rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-[var(--color-gold)] rounded-full"
+                                style={{ width: b.preparation_progress + "%" }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)]">
+                              {b.preparation_progress}%
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setDetail(b)}
+                          className="text-xs px-3 py-1.5 border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-all whitespace-nowrap"
+                        >
+                          Kelola
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {filtered.length === 0 && (
+            <p className="text-center py-12 text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
+              Tidak ada booking ditemukan.
+            </p>
+          )}
+
+          {/* Paginasi */}
+          {totalPages > 1 && (
+            <div className="flex justify-center gap-2">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={[
+                    "w-8 h-8 text-xs font-[var(--font-sans)] border transition-all",
+                    page === p
+                      ? "bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]"
+                      : "border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]",
+                  ].join(" ")}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Modal detail + workflow */}
+      <Modal
+        isOpen={!!detail}
+        onClose={() => setDetail(null)}
+        title={detail ? detail.order_id + " — " + detail.pemesan_name : ""}
+        size="xl"
+      >
+        {detail && (
+          <div>
+            {/* Info booking */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-2">
+              {[
+                { l: "Paket", v: detail.package?.tier_id },
+                { l: "Tgl Nikah", v: detail.wedding_date },
+                { l: "Lokasi", v: detail.location },
+                { l: "Konsep", v: detail.konsep },
+                { l: "Total", v: formatRupiah(detail.total_price) },
+                { l: "HP", v: detail.pemesan_phone },
+              ]
+                .filter((x) => x.v)
+                .map(({ l, v }) => (
+                  <div
+                    key={l}
+                    className="border border-[var(--color-cream-border)] p-3"
+                  >
+                    <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">
+                      {l}
+                    </p>
+                    <p className="text-sm font-medium text-[var(--color-dark)] font-[var(--font-sans)] capitalize">
+                      {v}
+                    </p>
+                  </div>
+                ))}
+            </div>
+            {detail.notes && (
+              <div className="mb-2 px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+                <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
+                  Catatan
+                </p>
+                <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]">
+                  {detail.notes}
+                </p>
+              </div>
+            )}
+
+            <WorkflowPanel
+              booking={detail}
+              vendors={vendors}
+              onUpdated={async () => {
+                await load();
+                // Refresh detail dengan data terbaru
+                const fresh = await adminService.getBookings();
+                const arr = Array.isArray(fresh) ? fresh : fresh.data || [];
+                const updated = arr.find((b) => b.id === detail.id);
+                if (updated) setDetail(updated);
+              }}
+            />
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}

@@ -9,7 +9,7 @@ use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\BookingWorkflowController;
 use Illuminate\Support\Facades\Route;
 
-// PUBLIK
+// ── PUBLIK (tidak butuh login) ─────────────────────────────────
 Route::prefix('auth')->group(function () {
     Route::post('/login',           [AuthController::class, 'login']);
     Route::post('/register',        [AuthController::class, 'register']);
@@ -19,40 +19,48 @@ Route::prefix('auth')->group(function () {
     Route::post('/reset-password',  [AuthController::class, 'resetPassword']);
 });
 
+// Vendor publik — urutan PENTING: spesifik dulu, wildcard terakhir
 Route::prefix('vendors')->group(function () {
     Route::get('/',            [VendorController::class, 'index']);
     Route::get('/slug/{slug}', [VendorController::class, 'showBySlug']);
-    Route::get('/{vendor}',    [VendorController::class, 'show']);
+    Route::get('/{vendor}',    [VendorController::class, 'show']);   // wildcard terakhir
 });
 
-// Paket bisa dilihat tanpa login
-Route::get('/packages', fn() => response()->json(['data' => \App\Models\Package::where('is_active', true)->get()]));
+Route::get('/packages',           fn() => response()->json(['data' =>
+    \App\Models\Package::where('is_active', true)->with('vendor')->get()
+]));
+Route::get('/packages/{tierId}',  fn($t) => response()->json(['data' =>
+    \App\Models\Package::where('tier_id', $t)->where('is_active', true)->firstOrFail()
+]));
 
 Route::get('/gallery', [GalleryController::class, 'index']);
 Route::post('/payment/notify', [BookingController::class, 'midtransNotify']);
 
-// PROTECTED
+// ── PROTECTED (butuh login / Bearer token) ────────────────────
 Route::middleware('auth:sanctum')->group(function () {
 
+    // Auth
     Route::get('/auth/me',              [AuthController::class, 'me']);
     Route::post('/auth/logout',         [AuthController::class, 'logout']);
     Route::put('/auth/profile',         [AuthController::class, 'updateProfile']);
     Route::put('/auth/change-password', [AuthController::class, 'changePassword']);
 
-    Route::get('/vendors/my',                         [VendorController::class, 'my']);
-    Route::put('/vendors/{vendor}',                   [VendorController::class, 'update']);
-    Route::put('/vendors/{vendor}/packages/{tierId}', [VendorController::class, 'updatePackagePrice']);
+    // Vendor — /vendors/my harus SEBELUM public wildcard sudah aman
+    // karena di sini ada prefix auth:sanctum, Laravel prioritaskan route dalam group ini
+    Route::get('/vendors/my',   [VendorController::class, 'my']);
+    Route::put('/vendors/{vendor}', [VendorController::class, 'update']);
 
-    // Booking customer
-    Route::get('/bookings/my',               [BookingController::class, 'my']);
-    Route::get('/bookings/vendor',            [BookingController::class, 'vendorInbox']);
-    Route::get('/bookings/{booking}',         [BookingController::class, 'show']);
-    Route::post('/bookings',                  [BookingController::class, 'store']);
-    Route::post('/bookings/{booking}/pay-dp',  [BookingController::class, 'payDP']);
-    Route::post('/bookings/{booking}/pay-full', [BookingController::class, 'payFull']);
-    Route::post('/bookings/{booking}/rate',    [BookingController::class, 'rate']);
+    // Customer booking
+    Route::get('/bookings/my',                       [BookingController::class, 'my']);
+    Route::get('/bookings/vendor',                   [BookingController::class, 'vendorInbox']);
+    Route::get('/bookings/{booking}',                [BookingController::class, 'show']);
+    Route::post('/bookings',                         [BookingController::class, 'store']);
+    Route::post('/bookings/{booking}/pay',           [BookingController::class, 'pay']);
+    Route::patch('/bookings/{booking}/reschedule',   [BookingController::class, 'reschedule']);
+    Route::patch('/bookings/{booking}/cancel',       [BookingController::class, 'cancel']);
+    Route::post('/bookings/{booking}/rate',          [BookingController::class, 'rate']);
 
-    // Vendor confirm/reject request dari admin
+    // Vendor confirm/reject request
     Route::middleware('role:vendor')->group(function () {
         Route::post('/vendor-requests/{vendorRequest}/confirm', [VendorRequestController::class, 'confirm']);
         Route::post('/vendor-requests/{vendorRequest}/reject',  [VendorRequestController::class, 'reject']);
@@ -61,23 +69,29 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/gallery',             [GalleryController::class, 'store']);
     Route::delete('/gallery/{gallery}', [GalleryController::class, 'destroy']);
 
-    // Admin
+    // ── ADMIN ────────────────────────────────────────────────
     Route::middleware('role:admin')->prefix('admin')->group(function () {
-        Route::get('/stats',                    [AdminController::class, 'stats']);
-        Route::get('/users',                    [AdminController::class, 'users']);
-        Route::delete('/users/{user}',          [AdminController::class, 'deleteUser']);
-        Route::get('/vendors',                  [AdminController::class, 'vendors']);
-        Route::patch('/vendors/{vendor}/approve',[AdminController::class, 'approveVendor']);
-        Route::patch('/vendors/{vendor}/reject', [AdminController::class, 'rejectVendor']);
-        Route::delete('/vendors/{vendor}',      [AdminController::class, 'deleteVendor']);
-        Route::get('/bookings',                 [AdminController::class, 'bookings']);
+        Route::get('/stats', [AdminController::class, 'stats']);
 
-        // Workflow WO
-        Route::patch('/bookings/{booking}/assign-vendor',       [BookingWorkflowController::class, 'assignVendor']);
-        Route::patch('/bookings/{booking}/reassign-vendor',     [BookingWorkflowController::class, 'reassignVendor']);
-        Route::post('/bookings/{booking}/tech-meeting',         [BookingWorkflowController::class, 'setTechMeeting']);
-        Route::patch('/bookings/{booking}/confirm-tech-meeting',[BookingWorkflowController::class, 'confirmTechMeeting']);
-        Route::patch('/bookings/{booking}/preparation',         [BookingWorkflowController::class, 'updatePreparation']);
-        Route::patch('/bookings/{booking}/execute-event',       [BookingWorkflowController::class, 'markEventExecuted']);
+        // Users
+        Route::get('/users',           [AdminController::class, 'users']);
+        Route::delete('/users/{user}', [AdminController::class, 'deleteUser']);
+
+        // Vendors CRUD
+        Route::get('/vendors',                    [AdminController::class, 'vendors']);
+        Route::post('/vendors',                   [AdminController::class, 'createVendor']);
+        Route::put('/vendors/{vendor}',           [AdminController::class, 'updateVendor']);
+        Route::patch('/vendors/{vendor}/approve', [AdminController::class, 'approveVendor']);
+        Route::patch('/vendors/{vendor}/reject',  [AdminController::class, 'rejectVendor']);
+        Route::delete('/vendors/{vendor}',        [AdminController::class, 'deleteVendor']);
+
+        // Bookings + workflow WO
+        Route::get('/bookings',                                  [AdminController::class, 'bookings']);
+        Route::patch('/bookings/{booking}/assign-vendor',        [BookingWorkflowController::class, 'assignVendor']);
+        Route::patch('/bookings/{booking}/reassign-vendor',      [BookingWorkflowController::class, 'reassignVendor']);
+        Route::post('/bookings/{booking}/tech-meeting',          [BookingWorkflowController::class, 'setTechMeeting']);
+        Route::patch('/bookings/{booking}/confirm-tech-meeting', [BookingWorkflowController::class, 'confirmTechMeeting']);
+        Route::patch('/bookings/{booking}/preparation',          [BookingWorkflowController::class, 'updatePreparation']);
+        Route::patch('/bookings/{booking}/execute-event',        [BookingWorkflowController::class, 'markEventExecuted']);
     });
 });

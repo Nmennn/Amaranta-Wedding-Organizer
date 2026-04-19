@@ -12,7 +12,9 @@ import {
   Navigate,
   Outlet,
 } from "react-router-dom";
+import { useEffect } from "react";
 import useAuthStore from "./store/authStore";
+import ToastContainer from "./components/ToastContainer";
 
 // ── Public ──────────────────────────────────────────────────
 import Landing from "./pages/public/Landing";
@@ -22,9 +24,7 @@ import Gallery from "./pages/public/Gallery";
 import About from "./pages/public/About";
 import Login from "./pages/public/Login";
 import Register from "./pages/public/Register";
-import Cart from "./pages/public/Cart";
-import Checkout from "./pages/public/Checkout";
-
+import BookingForm from "./pages/public/BookingForm";
 
 // ── Admin ────────────────────────────────────────────────────
 import AdminLayout from "./layouts/AdminLayout";
@@ -44,6 +44,7 @@ import VendorProfile from "./pages/vendor/Profile";
 import CustomerLayout from "./layouts/CustomerLayout";
 import CustomerMyBookings from "./pages/customer/MyBookings";
 import CustomerProfile from "./pages/customer/Profile";
+import CustomerInvoice from "./pages/customer/Invoice";
 
 // ── Route Guards ─────────────────────────────────────────────
 
@@ -78,97 +79,129 @@ function GuestRoute() {
 // ─────────────────────────────────────────────────────────────
 
 function App() {
+  const token = useAuthStore((s) => s.token);
+  const logout = useAuthStore((s) => s.logout);
+
+  // Validasi token ke backend saat pertama load
+  // Jika token expired/invalid → auto logout agar tidak terjebak akun lama
+  useEffect(() => {
+    if (!token) return;
+    const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+    fetch(API + "/auth/me", {
+      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+    })
+      .then((r) => {
+        if (r.status === 401) logout(); // token tidak valid → logout otomatis
+      })
+      .catch(() => {}); // kalau backend mati, jangan logout
+  }, []);
+
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* ── PUBLIK (semua bisa akses) ── */}
-        <Route path="/" element={<Landing />} />
-        <Route path="/paket" element={<Packages />} />
-        {/* /vendor & /vendor/:slug dihapus — AMARANTA 1 vendor */}
-        <Route path="/galeri" element={<Gallery />} />
-        <Route path="/tentang" element={<About />} />
-        <Route path="/keranjang" element={<Cart />} />
-        <Route path="/checkout" element={<Checkout />} />
+    <>
+      <ToastContainer />
+      <BrowserRouter>
+        <Routes>
+          {/* ── PUBLIK (semua bisa akses) ── */}
+          <Route path="/" element={<Landing />} />
+          <Route path="/paket" element={<Packages />} />
+          {/* /vendor & /vendor/:slug dihapus — AMARANTA 1 vendor */}
+          <Route path="/galeri" element={<Gallery />} />
+          <Route path="/tentang" element={<About />} />
+          {/* /pesan/:tierId — form pemesanan langsung, butuh login */}
 
-        {/* ── GUEST ONLY (redirect jika sudah login) ── */}
-        <Route element={<GuestRoute />}>
-          <Route path="/masuk" element={<Login />} />
-          <Route path="/daftar" element={<Register />} />
-        </Route>
+          {/* ── GUEST ONLY (redirect jika sudah login) ── */}
+          <Route element={<GuestRoute />}>
+            <Route path="/masuk" element={<Login />} />
+            <Route path="/daftar" element={<Register />} />
+          </Route>
 
-        {/* ── PROTECTED (harus login) ── */}
-        <Route element={<PrivateRoute />}>
-          {/* Admin */}
-          <Route element={<RoleRoute allowedRoles={["admin"]} />}>
-            <Route element={<AdminLayout />}>
+          {/* ── PROTECTED (harus login) ── */}
+          <Route element={<PrivateRoute />}>
+            <Route path="/pesan/:tierId" element={<BookingForm />} />
+
+            {/* Admin */}
+            <Route element={<RoleRoute allowedRoles={["admin"]} />}>
+              <Route element={<AdminLayout />}>
+                <Route
+                  path="/admin"
+                  element={<Navigate to="/admin/dashboard" replace />}
+                />
+                <Route path="/admin/dashboard" element={<AdminDashboard />} />
+                <Route path="/admin/vendors" element={<AdminVendors />} />
+                <Route path="/admin/users" element={<AdminUsers />} />
+                <Route path="/admin/bookings" element={<AdminBookings />} />
+              </Route>
+            </Route>
+
+            {/* Vendor Panel — TERPISAH dari /vendor (public) */}
+            <Route element={<RoleRoute allowedRoles={["vendor"]} />}>
+              <Route element={<VendorLayout />}>
+                <Route
+                  path="/vendor-panel"
+                  element={<Navigate to="/vendor-panel/dashboard" replace />}
+                />
+                <Route
+                  path="/vendor-panel/dashboard"
+                  element={<VendorDashboard />}
+                />
+                <Route
+                  path="/vendor-panel/packages"
+                  element={<VendorPackages />}
+                />
+                <Route
+                  path="/vendor-panel/bookings"
+                  element={<VendorBookings />}
+                />
+                <Route
+                  path="/vendor-panel/profile"
+                  element={<VendorProfile />}
+                />
+              </Route>
+            </Route>
+
+            {/* Invoice — full screen, tanpa CustomerLayout */}
+            <Route element={<RoleRoute allowedRoles={["customer"]} />}>
               <Route
-                path="/admin"
-                element={<Navigate to="/admin/dashboard" replace />}
+                path="/pelanggan/invoice/:id"
+                element={<CustomerInvoice />}
               />
-              <Route path="/admin/dashboard" element={<AdminDashboard />} />
-              <Route path="/admin/vendors" element={<AdminVendors />} />
-              <Route path="/admin/users" element={<AdminUsers />} />
-              <Route path="/admin/bookings" element={<AdminBookings />} />
+            </Route>
+
+            {/* Customer */}
+            <Route element={<RoleRoute allowedRoles={["customer"]} />}>
+              <Route element={<CustomerLayout />}>
+                <Route
+                  path="/pelanggan/pemesanan"
+                  element={<CustomerMyBookings />}
+                />
+                <Route path="/pelanggan/profil" element={<CustomerProfile />} />
+              </Route>
             </Route>
           </Route>
 
-          {/* Vendor Panel — TERPISAH dari /vendor (public) */}
-          <Route element={<RoleRoute allowedRoles={["vendor"]} />}>
-            <Route element={<VendorLayout />}>
-              <Route
-                path="/vendor-panel"
-                element={<Navigate to="/vendor-panel/dashboard" replace />}
-              />
-              <Route
-                path="/vendor-panel/dashboard"
-                element={<VendorDashboard />}
-              />
-              <Route
-                path="/vendor-panel/packages"
-                element={<VendorPackages />}
-              />
-              <Route
-                path="/vendor-panel/bookings"
-                element={<VendorBookings />}
-              />
-              <Route path="/vendor-panel/profile" element={<VendorProfile />} />
-            </Route>
-          </Route>
-
-          {/* Customer */}
-          <Route element={<RoleRoute allowedRoles={["customer"]} />}>
-            <Route element={<CustomerLayout />}>
-              <Route
-                path="/pelanggan/pemesanan"
-                element={<CustomerMyBookings />}
-              />
-              <Route path="/pelanggan/profil" element={<CustomerProfile />} />
-            </Route>
-          </Route>
-        </Route>
-
-        {/* ── 404 ── */}
-        <Route
-          path="*"
-          element={
-            <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--color-cream)] gap-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)]">
-                404
-              </p>
-              <h1 className="font-[var(--font-display)] text-5xl text-[var(--color-dark)]">
-                Halaman tidak ditemukan
-              </h1>
-              <a
-                href="/"
-                className="text-sm text-[var(--color-gold)] hover:underline font-[var(--font-sans)]"
-              >
-                ← Kembali ke Beranda
-              </a>
-            </div>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+          {/* ── 404 ── */}
+          <Route
+            path="*"
+            element={
+              <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--color-cream)] gap-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)]">
+                  404
+                </p>
+                <h1 className="font-[var(--font-display)] text-5xl text-[var(--color-dark)]">
+                  Halaman tidak ditemukan
+                </h1>
+                <a
+                  href="/"
+                  className="text-sm text-[var(--color-gold)] hover:underline font-[var(--font-sans)]"
+                >
+                  ← Kembali ke Beranda
+                </a>
+              </div>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </>
   );
 }
 
