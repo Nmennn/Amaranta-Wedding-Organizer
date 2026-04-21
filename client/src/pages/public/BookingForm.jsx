@@ -119,8 +119,7 @@ export default function BookingForm() {
         method: "POST",
         headers,
         body: JSON.stringify({
-          // Kirim package_id (numerik) atau tier_id (string), backend handle keduanya
-          ...(pkg.dbId ? { package_id: pkg.dbId } : { tier_id: pkg.id }),
+          tier_id: pkg.id, // 'silver' | 'gold' | 'platinum' — lebih stabil dari ID numerik
           pemesan_name: form.name,
           pemesan_email: form.email,
           pemesan_phone: form.phone,
