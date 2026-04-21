@@ -97,29 +97,24 @@ class BookingController extends Controller
         ], 201);
     }
 
-    // POST /api/bookings/{id}/pay-full
-    // ATURAN: Wajib lunas sebelum acara dieksekusi + vendor harus confirmed
+    // POST /api/bookings/{id}/pay
+    // Pembayaran langsung LUNAS — tidak ada DP
     public function pay(Request $request, Booking $booking): JsonResponse
     {
         if ($booking->customer_id !== $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
-        if (!$booking->isDpPaid()) {
-            return response()->json(['message' => 'DP belum dibayar.'], 422);
-        }
+
+        // Sudah lunas
         if ($booking->isFullPaid()) {
-            return response()->json(['message' => 'Pembayaran sudah lunas.'], 422);
-        }
-        if (!$booking->vendorRequests()->where('status', 'confirmed')->exists()) {
-            return response()->json([
-                'message' => 'Pelunasan belum bisa dilakukan. Tunggu konfirmasi vendor dari admin.',
-            ], 422);
+            return response()->json(['message' => 'Booking ini sudah dibayar.'], 422);
         }
 
-        // $sisa dihapus — pembayaran langsung full amount
+        $amount = $booking->total_price;   // langsung full
+
         $snapToken = Snap::getSnapToken([
             'transaction_details' => [
-                'order_id' => $booking->order_id . '-FULL-' . time(),
+                'order_id'     => $booking->order_id . '-PAY-' . time(),
                 'gross_amount' => $amount,
             ],
             'customer_details' => [
@@ -128,14 +123,18 @@ class BookingController extends Controller
                 'phone'      => $booking->pemesan_phone,
             ],
             'item_details' => [[
-                'id' => 'full-' . $booking->id, 'price' => $amount,
-                'quantity' => 1, 'name' => 'Pelunasan ' . $booking->order_id,
+                'id'       => 'pay-' . $booking->id,
+                'price'    => $amount,
+                'quantity' => 1,
+                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA',
             ]],
         ]);
 
         Payment::create([
-            'booking_id' => $booking->id, 'type' => 'full',
-            'amount' => $amount, 'status' => 'pending',
+            'booking_id' => $booking->id,
+            'type'       => 'full',
+            'amount'     => $amount,
+            'status'     => 'pending',
             'snap_token' => $snapToken,
         ]);
 
@@ -226,7 +225,6 @@ class BookingController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    // PATCH /api/bookings/{id}/reschedule
     // Customer ubah tanggal — hanya boleh sebelum vendor confirmed
     public function reschedule(Request $request, Booking $booking): JsonResponse
     {
@@ -284,4 +282,20 @@ class BookingController extends Controller
             'data'    => $booking->fresh(),
         ]);
     }
+
+    // GET /api/bookings/booked-dates
+    // Kembalikan array tanggal yang sudah dipesan (tidak bisa dipilih lagi)
+    // Hanya tanggal dengan status aktif (bukan cancelled)
+    public function bookedDates(): JsonResponse
+    {
+        $dates = Booking::whereNotIn('status', ['cancelled'])
+            ->whereNotNull('wedding_date')
+            ->pluck('wedding_date')
+            ->map(fn($d) => $d instanceof \Carbon\Carbon ? $d->format('Y-m-d') : substr($d, 0, 10))
+            ->unique()
+            ->values();
+
+        return response()->json(['data' => $dates]);
+    }
+
 }

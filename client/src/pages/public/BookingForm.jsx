@@ -88,6 +88,8 @@ export default function BookingForm() {
     if (!form.email.includes("@")) e.email = "Email tidak valid";
     if (!form.phone.match(/^08/)) e.phone = "Format: 08xxxxxxxxxx";
     if (!form.wedding_date) e.wedding_date = "Tanggal wajib diisi";
+    else if (isDateBooked(form.wedding_date))
+      e.wedding_date = "Tanggal ini sudah dipesan. Pilih tanggal lain.";
     if (!form.location.trim()) e.location = "Lokasi wajib diisi";
     if (!form.konsep.trim()) e.konsep = "Konsep wajib diisi";
     setErrors(e);

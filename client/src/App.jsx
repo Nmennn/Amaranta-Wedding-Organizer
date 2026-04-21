@@ -84,7 +84,8 @@ function App() {
   const logout = useAuthStore((s) => s.logout);
 
   // Validasi token ke backend saat pertama load
-  // Jika token expired/invalid → auto logout agar tidak terjebak akun lama
+  // Hanya logout jika 401 (token benar-benar tidak valid)
+  // Kalau backend mati / network error → jangan logout, biarkan user tetap login
   useEffect(() => {
     if (!token) return;
     const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
@@ -92,10 +93,17 @@ function App() {
       headers: { Authorization: "Bearer " + token, Accept: "application/json" },
     })
       .then((r) => {
-        if (r.status === 401) logout(); // token tidak valid → logout otomatis
+        // Hanya logout jika token benar-benar invalid (401)
+        // Status lain (500, network error) = jangan logout
+        if (r.status === 401) {
+          logout();
+        }
       })
-      .catch(() => {}); // kalau backend mati, jangan logout
-  }, []);
+      .catch(() => {
+        // Backend tidak bisa diakses → jangan logout
+        // User tetap login dengan token yang ada
+      });
+  }, [token]);
 
   return (
     <>

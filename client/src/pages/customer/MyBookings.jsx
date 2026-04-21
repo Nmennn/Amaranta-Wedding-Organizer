@@ -125,12 +125,9 @@ export default function CustomerMyBookings() {
 
   // Modal states
   const [ratingModal, setRatingModal] = useState(null);
-  const [reschedModal, setReschedModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [ratingValue, setRatingValue] = useState(5);
   const [reviewText, setReviewText] = useState("");
-  const [newDate, setNewDate] = useState("");
-  const [reschedReason, setReschedReason] = useState("");
   const [acting, setActing] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
@@ -178,30 +175,6 @@ export default function CustomerMyBookings() {
     }
   }
 
-  async function handleReschedule() {
-    if (!newDate) return;
-    setActing(true);
-    try {
-      await bookingService.reschedule(reschedModal.id, {
-        wedding_date: newDate,
-        reason: reschedReason,
-      });
-      setBookings((p) =>
-        p.map((b) =>
-          b.id === reschedModal.id ? { ...b, wedding_date: newDate } : b,
-        ),
-      );
-      toastSuccess("Tanggal berhasil diubah ke " + newDate);
-      setReschedModal(null);
-      setNewDate("");
-      setReschedReason("");
-    } catch (err) {
-      toastError(err.userMessage || "Gagal mengubah tanggal.");
-    } finally {
-      setActing(false);
-    }
-  }
-
   async function handleRating() {
     if (!ratingModal) return;
     setActing(true);
@@ -230,14 +203,6 @@ export default function CustomerMyBookings() {
 
   // Apakah booking bisa di-reschedule?
   // Hanya sebelum vendor confirmed
-  function canReschedule(b) {
-    return [
-      "waiting_dp",
-      "payment_failed",
-      "waiting_vendor",
-      "vendor_assigned",
-    ].includes(b.admin_status);
-  }
 
   // Bisa batalkan hanya jika belum bayar
   function canCancel(b) {
@@ -430,33 +395,6 @@ export default function CustomerMyBookings() {
                     </button>
                   )}
 
-                  {/* Reschedule — sebelum vendor confirmed */}
-                  {canReschedule(booking) && (
-                    <button
-                      onClick={() => {
-                        setReschedModal(booking);
-                        setNewDate(booking.wedding_date || "");
-                        setReschedReason("");
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-2 border border-[var(--color-cream-border)] text-xs text-[var(--color-dark-muted)] hover:border-amber-400 hover:text-amber-600 font-[var(--font-sans)] transition-all"
-                    >
-                      <svg
-                        className="w-3.5 h-3.5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                        />
-                      </svg>
-                      Ubah Tanggal
-                    </button>
-                  )}
-
                   {/* Beri rating */}
                   {booking.phase === "in_event" && !booking.rating && (
                     <Button
@@ -516,68 +454,6 @@ export default function CustomerMyBookings() {
             <p className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)]">
               Yakin membatalkan booking <strong>{cancelModal.order_id}</strong>?
             </p>
-          </div>
-        )}
-      </Modal>
-
-      {/* Modal Reschedule */}
-      <Modal
-        isOpen={!!reschedModal}
-        onClose={() => setReschedModal(null)}
-        title="Ubah Tanggal Pernikahan"
-        footer={
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setReschedModal(null)}
-            >
-              Batal
-            </Button>
-            <Button
-              variant="gold"
-              size="sm"
-              isLoading={acting}
-              onClick={handleReschedule}
-              disabled={!newDate}
-            >
-              Simpan
-            </Button>
-          </>
-        }
-      >
-        {reschedModal && (
-          <div className="space-y-4">
-            <div className="px-3 py-2 bg-amber-50 border border-amber-200">
-              <p className="text-xs text-amber-700 font-[var(--font-sans)]">
-                ⚠️ Perubahan tanggal hanya bisa dilakukan sebelum vendor
-                dikonfirmasi admin.
-              </p>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] block mb-1.5">
-                Tanggal Baru <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="date"
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-                min={today}
-                className="w-full border-b-2 border-[var(--color-cream-border)] focus:border-[var(--color-gold)] bg-transparent py-2 text-sm font-[var(--font-sans)] outline-none transition-colors"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] block mb-1.5">
-                Alasan Perubahan
-              </label>
-              <textarea
-                rows={2}
-                value={reschedReason}
-                onChange={(e) => setReschedReason(e.target.value)}
-                placeholder="Alasan pengubahan tanggal (opsional)..."
-                className="w-full border-b-2 border-[var(--color-cream-border)] focus:border-[var(--color-gold)] bg-transparent text-sm font-[var(--font-sans)] outline-none py-1 resize-none transition-colors"
-              />
-            </div>
           </div>
         )}
       </Modal>

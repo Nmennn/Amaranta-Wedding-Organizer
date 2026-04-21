@@ -34,6 +34,8 @@ Route::get('/packages/{tierId}',  fn($t) => response()->json(['data' =>
 ]));
 
 Route::get('/gallery', [GalleryController::class, 'index']);
+// Tanggal yang sudah dipesan — publik agar form booking bisa cek
+Route::get('/bookings/booked-dates', [BookingController::class, 'bookedDates']);
 Route::post('/payment/notify', [BookingController::class, 'midtransNotify']);
 
 // ── PROTECTED (butuh login / Bearer token) ────────────────────
@@ -56,7 +58,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/bookings/{booking}',                [BookingController::class, 'show']);
     Route::post('/bookings',                         [BookingController::class, 'store']);
     Route::post('/bookings/{booking}/pay',           [BookingController::class, 'pay']);
-    Route::patch('/bookings/{booking}/reschedule',   [BookingController::class, 'reschedule']);
     Route::patch('/bookings/{booking}/cancel',       [BookingController::class, 'cancel']);
     Route::post('/bookings/{booking}/rate',          [BookingController::class, 'rate']);
 
