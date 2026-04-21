@@ -157,7 +157,7 @@ function Login() {
                         Belum verifikasi OTP?
                       </p>
                       <a
-                        href="/daftar"
+                        href="/verifikasi"
                         className="text-xs px-3 py-1.5 bg-red-500 text-white hover:bg-red-600 transition-colors"
                       >
                         Verifikasi Sekarang →
@@ -223,6 +223,15 @@ function Login() {
                   className="text-[var(--color-gold)] hover:underline font-medium"
                 >
                   Daftar sekarang
+                </Link>
+              </p>
+              <p className="mt-2 text-xs text-center text-[var(--color-slate)] font-[var(--font-sans)]">
+                Sudah daftar tapi belum verifikasi?{" "}
+                <Link
+                  to="/verifikasi"
+                  className="text-[var(--color-gold)] hover:underline"
+                >
+                  Verifikasi email
                 </Link>
               </p>
             </div>

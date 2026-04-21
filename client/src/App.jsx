@@ -24,6 +24,7 @@ import Gallery from "./pages/public/Gallery";
 import About from "./pages/public/About";
 import Login from "./pages/public/Login";
 import Register from "./pages/public/Register";
+import Verifikasi from "./pages/public/Verifikasi";
 import BookingForm from "./pages/public/BookingForm";
 
 // ── Admin ────────────────────────────────────────────────────
@@ -113,6 +114,7 @@ function App() {
           <Route element={<GuestRoute />}>
             <Route path="/masuk" element={<Login />} />
             <Route path="/daftar" element={<Register />} />
+            <Route path="/verifikasi" element={<Verifikasi />} />
           </Route>
 
           {/* ── PROTECTED (harus login) ── */}
