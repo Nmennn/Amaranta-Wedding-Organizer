@@ -70,10 +70,31 @@ export default function BookingForm() {
     notes: "",
   });
 
+  const [bookedDates, setBookedDates] = useState([]);
+
   // Redirect jika paket tidak valid
   useEffect(() => {
     if (!pkg) navigate("/paket", { replace: true });
   }, [pkg, navigate]);
+
+  // Fetch tanggal yang sudah dipesan
+  useEffect(() => {
+    fetch(
+      (import.meta.env.VITE_API_URL || "http://localhost:8000/api") +
+        "/bookings/booked-dates",
+      {
+        headers: { Accept: "application/json" },
+      },
+    )
+      .then((r) => r.json())
+      .then((d) => setBookedDates(d.data || []))
+      .catch(() => {});
+  }, []);
+
+  // Cek apakah tanggal sudah dipesan
+  function isDateBooked(date) {
+    return date ? bookedDates.includes(date) : false;
+  }
 
   function handleChange(e) {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
@@ -89,20 +110,13 @@ export default function BookingForm() {
     if (!form.phone.match(/^08/)) e.phone = "Format: 08xxxxxxxxxx";
     if (!form.wedding_date) e.wedding_date = "Tanggal wajib diisi";
     else if (isDateBooked(form.wedding_date))
-      e.wedding_date = "Tanggal ini sudah dipesan. Pilih tanggal lain.";
+      e.wedding_date =
+        "Tanggal ini sudah dipesan oleh customer lain. Pilih tanggal berbeda.";
     if (!form.location.trim()) e.location = "Lokasi wajib diisi";
     if (!form.konsep.trim()) e.konsep = "Konsep wajib diisi";
     setErrors(e);
     return Object.keys(e).length === 0;
   }
-
-  const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
-  const headers = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    Authorization:
-      "Bearer " + (localStorage.getItem("amaranta_token") || token || ""),
-  };
 
   // Step 1 → 2: simpan booking ke DB, lanjut ke pilih metode bayar
   async function handleNext() {
