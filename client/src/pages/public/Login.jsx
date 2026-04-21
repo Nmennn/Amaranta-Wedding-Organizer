@@ -10,6 +10,7 @@ function Login() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState({});
   const [mode, setMode] = useState("login"); // 'login' | 'forgot'
+  const [unverified, setUnverified] = useState(false); // email belum verifikasi
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotSent, setForgotSent] = useState(false);
   const [fpLoading, setFpLoading] = useState(false);
@@ -148,8 +149,21 @@ function Login() {
               </h1>
 
               {apiError && (
-                <div className="mb-5 px-4 py-3 bg-red-50 border border-red-200 text-sm text-red-600 font-[var(--font-sans)]">
-                  ⚠️ {apiError}
+                <div className="mb-5 px-4 py-3 bg-red-50 border border-red-200 font-[var(--font-sans)]">
+                  <p className="text-sm text-red-600">⚠️ {apiError}</p>
+                  {apiError.includes("diverifikasi") && (
+                    <div className="mt-3 pt-3 border-t border-red-200 flex items-center gap-3">
+                      <p className="text-xs text-red-500 flex-1">
+                        Belum verifikasi OTP?
+                      </p>
+                      <a
+                        href="/daftar"
+                        className="text-xs px-3 py-1.5 bg-red-500 text-white hover:bg-red-600 transition-colors"
+                      >
+                        Verifikasi Sekarang →
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 
