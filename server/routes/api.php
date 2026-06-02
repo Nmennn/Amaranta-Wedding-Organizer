@@ -19,12 +19,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/reset-password',  [AuthController::class, 'resetPassword']);
 });
 
-// Vendor publik — urutan PENTING: spesifik dulu, wildcard terakhir
-Route::prefix('vendors')->group(function () {
-    Route::get('/',            [VendorController::class, 'index']);
-    Route::get('/slug/{slug}', [VendorController::class, 'showBySlug']);
-    Route::get('/{vendor}',    [VendorController::class, 'show']);   // wildcard terakhir
-});
+// Tidak ada halaman list vendor publik — vendor dikelola admin
 
 Route::get('/packages',           fn() => response()->json(['data' =>
     \App\Models\Package::where('is_active', true)->with('vendor')->get()
@@ -58,6 +53,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/bookings/{booking}',                [BookingController::class, 'show']);
     Route::post('/bookings',                         [BookingController::class, 'store']);
     Route::post('/bookings/{booking}/pay',           [BookingController::class, 'pay']);
+    Route::patch('/bookings/{booking}/reschedule',   [BookingController::class, 'reschedule']);
     Route::patch('/bookings/{booking}/cancel',       [BookingController::class, 'cancel']);
     Route::post('/bookings/{booking}/rate',          [BookingController::class, 'rate']);
 

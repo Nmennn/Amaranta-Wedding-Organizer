@@ -61,7 +61,7 @@ class Booking extends Model
 
     public function isDpPaid(): bool
     {
-        return $this->payments()->where('type', 'dp')->where('status', 'success')->exists();
+        return $this->payments()->whereIn('type', ['dp', 'dp30'])->where('status', 'success')->exists();
     }
 
     public function isFullPaid(): bool

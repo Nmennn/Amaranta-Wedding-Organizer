@@ -15,7 +15,7 @@ return new class extends Migration
                   ->constrained()
                   ->cascadeOnDelete();
 
-            $table->enum('type', ['dp', 'full']);      // jenis pembayaran
+            $table->enum('type', ['dp', 'dp30', 'full']);      // jenis pembayaran: dp(legacy), dp30, atau full
             $table->unsignedBigInteger('amount');       // nominal yang dibayar
             $table->enum('status', ['pending', 'success', 'failed', 'expired'])
                   ->default('pending');

@@ -98,7 +98,7 @@ class BookingController extends Controller
     }
 
     // POST /api/bookings/{id}/pay
-    // Pembayaran langsung LUNAS — tidak ada DP
+    // Pembayaran: bisa DP 30% atau lunas
     public function pay(Request $request, Booking $booking): JsonResponse
     {
         if ($booking->customer_id !== $request->user()->id) {
@@ -110,11 +110,20 @@ class BookingController extends Controller
             return response()->json(['message' => 'Booking ini sudah dibayar.'], 422);
         }
 
-        $amount = $booking->total_price;   // langsung full
+        // Tentukan tipe pembayaran: 'full' atau 'dp30'
+        $paymentType = $request->input('payment_type', 'full');
+        if (!in_array($paymentType, ['full', 'dp30'])) {
+            $paymentType = 'full';
+        }
+
+        // Hitung amount berdasarkan tipe pembayaran
+        $amount = $paymentType === 'dp30'
+            ? (int) round($booking->total_price * 0.3)
+            : $booking->total_price;
 
         $snapToken = Snap::getSnapToken([
             'transaction_details' => [
-                'order_id'     => $booking->order_id . '-PAY-' . time(),
+                'order_id'     => $booking->order_id . '-' . strtoupper($paymentType) . '-' . time(),
                 'gross_amount' => $amount,
             ],
             'customer_details' => [
@@ -126,13 +135,13 @@ class BookingController extends Controller
                 'id'       => 'pay-' . $booking->id,
                 'price'    => $amount,
                 'quantity' => 1,
-                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA',
+                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA' . ($paymentType === 'dp30' ? ' (DP 30%)' : ''),
             ]],
         ]);
 
         Payment::create([
             'booking_id' => $booking->id,
-            'type'       => 'full',
+            'type'       => $paymentType,
             'amount'     => $amount,
             'status'     => 'pending',
             'snap_token' => $snapToken,
@@ -142,6 +151,63 @@ class BookingController extends Controller
             'snap_token' => $snapToken,
             'client_key' => config('services.midtrans.client_key'),
             'amount'     => $amount,
+            'payment_type' => $paymentType,
+        ]);
+    }
+
+    // POST /api/bookings/{id}/pay-remaining
+    // Pembayaran pelunasan (70% sisa setelah DP 30%)
+    public function payRemaining(Request $request, Booking $booking): JsonResponse
+    {
+        if ($booking->customer_id !== $request->user()->id) {
+            return response()->json(['message' => 'Tidak diizinkan.'], 403);
+        }
+
+        // Cek apakah sudah lunas
+        if ($booking->isFullPaid()) {
+            return response()->json(['message' => 'Booking ini sudah dibayar lunas.'], 422);
+        }
+
+        // Cek apakah sudah ada DP pembayaran
+        if (!$booking->isDpPaid()) {
+            return response()->json(['message' => 'Anda harus membayar DP terlebih dahulu.'], 422);
+        }
+
+        // Hitung sisa pembayaran (70%)
+        $dpAmount = (int) round($booking->total_price * 0.3);
+        $remainingAmount = $booking->total_price - $dpAmount;
+
+        $snapToken = Snap::getSnapToken([
+            'transaction_details' => [
+                'order_id'     => $booking->order_id . '-REMAINING-' . time(),
+                'gross_amount' => $remainingAmount,
+            ],
+            'customer_details' => [
+                'first_name' => $booking->pemesan_name,
+                'email'      => $booking->pemesan_email,
+                'phone'      => $booking->pemesan_phone,
+            ],
+            'item_details' => [[
+                'id'       => 'remaining-' . $booking->id,
+                'price'    => $remainingAmount,
+                'quantity' => 1,
+                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA (Pelunasan 70%)',
+            ]],
+        ]);
+
+        Payment::create([
+            'booking_id' => $booking->id,
+            'type'       => 'full',
+            'amount'     => $remainingAmount,
+            'status'     => 'pending',
+            'snap_token' => $snapToken,
+        ]);
+
+        return response()->json([
+            'snap_token' => $snapToken,
+            'client_key' => config('services.midtrans.client_key'),
+            'amount'     => $remainingAmount,
+            'payment_type' => 'remaining',
         ]);
     }
 
@@ -189,17 +255,27 @@ class BookingController extends Controller
         $status  = $notif->transaction_status;
         $type    = $notif->payment_type;
 
-        preg_match('/^(AMRT-[A-Z0-9]+)-(DP|FULL)-/', $orderId, $m);
+        // Parse order_id: AMRT-xxxxxx-DP30-timestamp atau AMRT-xxxxxx-FULL-timestamp atau AMRT-xxxxxx-REMAINING-timestamp
+        preg_match('/^(AMRT-[A-Z0-9]+)-(DP|DP30|FULL|REMAINING)-/', $orderId, $m);
         if (empty($m)) return response()->json(['ok' => false]);
 
         $booking = Booking::where('order_id', $m[1])->first();
         if (!$booking) return response()->json(['ok' => false]);
 
-        $paymentType = strtolower($m[2]);
-        $payment = Payment::where('booking_id', $booking->id)
-                          ->where('type', $paymentType)
-                          ->where('status', 'pending')
-                          ->latest()->first();
+        $paymentType = strtolower($m[2]); // 'dp', 'dp30', 'full', atau 'remaining'
+        
+        // Untuk REMAINING, cari payment dengan type 'full' yang pending terbaru
+        if ($paymentType === 'remaining') {
+            $payment = Payment::where('booking_id', $booking->id)
+                              ->where('type', 'full')
+                              ->where('status', 'pending')
+                              ->latest()->first();
+        } else {
+            $payment = Payment::where('booking_id', $booking->id)
+                              ->where('type', $paymentType)
+                              ->where('status', 'pending')
+                              ->latest()->first();
+        }
 
         if (in_array($status, ['settlement', 'capture'])) {
             $payment?->update([
@@ -208,15 +284,25 @@ class BookingController extends Controller
                 'paid_at' => now(), 'midtrans_response' => (array) $notif,
             ]);
 
-            // Full payment langsung lunas
+            // Update booking status berdasarkan payment type
+            if ($paymentType === 'full' || $paymentType === 'remaining') {
+                // Pembayaran penuh atau pelunasan sisa — booking langsung lunas
                 $booking->update([
-                    'phase'          => 'dp_paid',
-                    'dp_paid_at'     => now(),
+                    'phase'          => 'full_paid',
                     'full_paid_at'   => now(),
                     'payment_method' => $type,
                     'status'         => 'confirmed',
                     'admin_status'   => 'waiting_vendor',
                 ]);
+            } elseif (in_array($paymentType, ['dp', 'dp30'])) {
+                // DP pembayaran — menunggu pelunasan
+                $booking->update([
+                    'phase'          => 'dp_paid',
+                    'dp_paid_at'     => now(),
+                    'payment_method' => $type,
+                    'admin_status'   => 'dp_paid',
+                ]);
+            }
         } elseif (in_array($status, ['cancel', 'deny', 'expire'])) {
             $payment?->update(['status' => 'failed']);
             $booking->update(['admin_status' => 'payment_failed']);

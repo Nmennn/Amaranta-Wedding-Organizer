@@ -11,6 +11,8 @@ import {
 
 const d = (r) => r.data?.data ?? r.data;
 
+export { api };
+
 export const authService = {
   login: (c) => api.post(AUTH.LOGIN, c).then(d),
   register: (d2) => api.post(AUTH.REGISTER, d2).then(d),
