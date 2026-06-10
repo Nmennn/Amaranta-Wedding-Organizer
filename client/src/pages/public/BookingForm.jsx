@@ -31,7 +31,7 @@ export default function BookingForm() {
   const [accepted, setAccepted] = useState(false)
 
   // Cari paket berdasarkan tierId
-  const pkg = PACKAGES.find(p => p.tier_id === tierId?.toLowerCase())
+  const pkg = PACKAGES.find(p => p.id === tierId?.toLowerCase())
 
   if (!pkg) {
     return (
@@ -66,7 +66,10 @@ export default function BookingForm() {
     setLoading(true)
     try {
       const bookingData = {
-        tier_id: pkg.tier_id,
+        tier_id: pkg.id,
+        pemesan_name: user.name,
+        pemesan_email: user.email,
+        pemesan_phone: user.phone,
         wedding_date: weddingDate,
         location,
         konsep: concept,
@@ -101,7 +104,7 @@ export default function BookingForm() {
               Formulir Pemesanan
             </p>
             <h1 className="font-[var(--font-display)] text-4xl text-[var(--color-dark)] mb-2">
-              Paket {pkg.name}
+              Paket {pkg.tier}
             </h1>
             <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
               Isi detail pernikahan Anda untuk melanjutkan pemesanan
@@ -113,16 +116,16 @@ export default function BookingForm() {
             <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
               <div>
                 <h2 className="font-[var(--font-display)] text-2xl text-[var(--color-dark)] mb-2">
-                  {pkg.name}
+                  Paket {pkg.tier}
                 </h2>
                 <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)] mb-3">
-                  {pkg.description}
+                  {pkg.tagline}
                 </p>
                 <ul className="space-y-1 text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]">
-                  {pkg.features?.slice(0, 3).map((feature, i) => (
+                  {pkg.includes?.slice(0, 3).map((item, i) => (
                     <li key={i} className="flex items-start gap-2">
                       <span className="text-[var(--color-gold)] flex-shrink-0">✓</span>
-                      <span>{feature}</span>
+                      <span>{item.label}</span>
                     </li>
                   ))}
                 </ul>

@@ -10,8 +10,9 @@
 // ============================================================
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { bookingService } from "../../services";
+import { bookingService, api } from "../../services";
 import { PACKAGES, AMARANTA_INFO, formatRupiah } from "../../data/packages";
+import { toastSuccess, toastError } from "../../hooks/useToast";
 
 // CSS print disuntikkan ke <head> saat komponen mount
 const PRINT_CSS = `
@@ -94,6 +95,7 @@ export default function Invoice() {
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const styleRef = useRef(null);
 
   // Inject print CSS
@@ -117,8 +119,93 @@ export default function Invoice() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // Refresh data ketika window fokus kembali (user kembali ke tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      if (id && booking) {
+        bookingService
+          .getById(id)
+          .then((data) => setBooking(data))
+          .catch((err) => console.error("Failed to refresh on focus:", err));
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [id, booking]);
+
   function handlePrint() {
     window.print();
+  }
+
+  async function handlePayDP() {
+    if (!booking) return;
+    setPaymentLoading(true);
+    try {
+      const res = await api.post(`/bookings/${booking.id}/pay`, {
+        payment_type: "dp30",
+      });
+      const snapToken = res.data?.snap_token || res.data?.data?.snap_token;
+      if (
+        typeof window !== "undefined" &&
+        typeof window.snap !== "undefined" &&
+        snapToken
+      ) {
+        window.snap.pay(snapToken, {
+          onSuccess: async () => {
+            toastSuccess("Pembayaran berhasil! Memproses...");
+            try {
+              // Step 1: Confirm payment ke backend
+              await api.post(`/bookings/${booking.id}/confirm-payment`, {
+                payment_type: "dp30",
+              });
+              
+              // Step 2: Wait sebentar untuk processing
+              await new Promise(resolve => setTimeout(resolve, 1500));
+              
+              // Step 3: Fetch booking data terbaru
+              const updatedBooking = await bookingService.getById(booking.id);
+              setBooking(updatedBooking);
+              toastSuccess("Invoice siap ditampilkan!");
+              
+              // Step 4: Scroll ke atas
+              setTimeout(() => {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }, 300);
+            } catch (err) {
+              console.error("Failed to confirm payment:", err);
+              toastError(err.response?.data?.message || "Gagal mengonfirmasi pembayaran");
+              
+              // Fallback: tunggu lebih lama dan coba refresh data
+              setTimeout(async () => {
+                try {
+                  const freshBooking = await bookingService.getById(booking.id);
+                  setBooking(freshBooking);
+                } catch (e) {
+                  console.error("Fallback refresh failed:", e);
+                }
+              }, 3000);
+            }
+            setPaymentLoading(false);
+          },
+          onPending: () => {
+            toastError("Pembayaran pending. Cek email untuk instruksi.");
+            setPaymentLoading(false);
+          },
+          onError: () => {
+            toastError("Pembayaran gagal. Coba lagi.");
+            setPaymentLoading(false);
+          },
+          onClose: () => setPaymentLoading(false),
+        });
+      } else {
+        toastError("Midtrans tidak siap. Coba beberapa saat lagi.");
+        setPaymentLoading(false);
+      }
+    } catch (err) {
+      toastError(err.userMessage || "Gagal memproses pembayaran");
+      setPaymentLoading(false);
+    }
   }
 
   if (loading)
@@ -202,12 +289,226 @@ export default function Invoice() {
   const paidAt =
     booking.full_paid_at || booking.dp_paid_at || booking.created_at;
   const invoiceNo = "INV-" + booking.order_id?.replace("AMRT-", "");
+  const invoiceType = booking.full_paid_at ? "LUNAS" : booking.dp_paid_at ? "DP 30%" : "PENDING";
   const statusColor =
-    booking.status === "completed"
+    booking.full_paid_at
       ? "#10b981"
-      : booking.status === "confirmed"
-        ? "#C9A96E"
-        : "#8A8480";
+      : booking.dp_paid_at
+        ? "#F59E0B"
+        : booking.status === "confirmed"
+          ? "#C9A96E"
+          : "#8A8480";
+
+  // ── Jika belum ada pembayaran, tampilkan halaman pembayaran DP ──
+  if (!booking.dp_paid_at && !booking.full_paid_at) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#FAF7F2",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 24,
+          padding: "24px",
+        }}
+      >
+        <div style={{ textAlign: "center", maxWidth: 450 }}>
+          <h1
+            style={{
+              fontFamily: "Playfair Display, Georgia, serif",
+              fontSize: 32,
+              color: "#1C1A17",
+              margin: "0 0 8px",
+            }}
+          >
+            Lanjutkan Pembayaran DP
+          </h1>
+          <p
+            style={{
+              fontSize: 14,
+              color: "#8A8480",
+              margin: "0 0 24px",
+              lineHeight: 1.6,
+            }}
+          >
+            Invoice Anda akan muncul setelah menyelesaikan pembayaran DP 30%. Klik tombol di bawah untuk memulai pembayaran.
+          </p>
+
+          {/* Package Summary */}
+          <div
+            style={{
+              background: "white",
+              border: "1px solid #E5DDD0",
+              borderRadius: 8,
+              padding: 20,
+              marginBottom: 24,
+              textAlign: "left",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+                paddingBottom: 12,
+                borderBottom: "1px solid #E5DDD0",
+              }}
+            >
+              <div>
+                <p
+                  style={{
+                    fontSize: 13,
+                    color: "#8A8480",
+                    margin: 0,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  Paket Dipilih
+                </p>
+                <p
+                  style={{
+                    fontSize: 16,
+                    color: "#1C1A17",
+                    fontWeight: 600,
+                    margin: "4px 0 0",
+                  }}
+                >
+                  {pkg.tier}
+                </p>
+              </div>
+              <p
+                style={{
+                  fontSize: 18,
+                  fontWeight: 600,
+                  color: tierColor,
+                  margin: 0,
+                }}
+              >
+                {formatRupiah(booking.total_price)}
+              </p>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                padding: "12px 0",
+                background: "#FEF3C7",
+                padding: "12px",
+                marginTop: 12,
+                borderRadius: 6,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>
+                DP 30% yang harus dibayar
+              </span>
+              <span
+                style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: "#D97706",
+                }}
+              >
+                {formatRupiah(booking.dp_amount)}
+              </span>
+            </div>
+          </div>
+
+          {/* Payment Button */}
+          <button
+            onClick={handlePayDP}
+            disabled={paymentLoading}
+            style={{
+              width: "100%",
+              padding: "14px 24px",
+              background: paymentLoading ? "#A8A29E" : "#C9A96E",
+              border: "none",
+              color: "#1C1A17",
+              fontSize: 14,
+              fontFamily: "DM Sans, sans-serif",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              cursor: paymentLoading ? "not-allowed" : "pointer",
+              opacity: paymentLoading ? 0.6 : 1,
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            {paymentLoading ? (
+              <>
+                <span
+                  style={{
+                    width: 14,
+                    height: 14,
+                    border: "2px solid #1C1A17",
+                    borderTopColor: "transparent",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+                Memproses...
+              </>
+            ) : (
+              <>💳 Bayar DP Sekarang</>
+            )}
+          </button>
+
+          <Link
+            to="/pelanggan/pemesanan"
+            style={{
+              fontSize: 13,
+              color: "#C9A96E",
+              textDecoration: "none",
+              marginTop: 16,
+              display: "block",
+            }}
+          >
+            ← Kembali
+          </Link>
+
+          <button
+            onClick={async () => {
+              try {
+                setLoading(true);
+                const updatedBooking = await bookingService.getById(booking.id);
+                setBooking(updatedBooking);
+              } catch (err) {
+                toastError("Gagal refresh data: " + err.message);
+              } finally {
+                setLoading(false);
+              }
+            }}
+            style={{
+              marginTop: 12,
+              padding: "8px 16px",
+              background: "#E5DDD0",
+              border: "none",
+              color: "#8A8480",
+              fontSize: 12,
+              fontFamily: "DM Sans, sans-serif",
+              cursor: "pointer",
+              borderRadius: 4,
+              display: "block",
+              margin: "16px auto 0",
+            }}
+          >
+            🔄 Refresh Pembayaran
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Jika sudah ada pembayaran, tampilkan invoice lengkap ──
 
   return (
     <div
@@ -242,6 +543,48 @@ export default function Invoice() {
           ← Pemesanan Saya
         </Link>
         <div style={{ display: "flex", gap: 10 }}>
+          {!booking?.dp_paid_at && (
+            <button
+              onClick={handlePayDP}
+              disabled={paymentLoading}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 20px",
+                background: paymentLoading ? "#A8A29E" : "#C9A96E",
+                border: "none",
+                color: "#1C1A17",
+                fontSize: 12,
+                fontFamily: "DM Sans, sans-serif",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                cursor: paymentLoading ? "not-allowed" : "pointer",
+                opacity: paymentLoading ? 0.6 : 1,
+              }}
+            >
+              {paymentLoading ? (
+                <>
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      border: "2px solid #1C1A17",
+                      borderTopColor: "transparent",
+                      borderRadius: "50%",
+                      animation: "spin 0.8s linear infinite",
+                    }}
+                  />
+                  Memproses...
+                </>
+              ) : (
+                <>
+                  💳 Bayar DP ({formatRupiah(booking?.dp_amount || 0)})
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={handlePrint}
             style={{
@@ -363,11 +706,11 @@ export default function Invoice() {
                 {invoiceNo}
               </p>
               <Badge color={statusColor}>
-                {booking.status === "completed"
-                  ? "Selesai"
-                  : booking.status === "confirmed"
-                    ? "Dikonfirmasi"
-                    : "Pending"}
+                {booking.full_paid_at
+                  ? "✓ LUNAS"
+                  : booking.dp_paid_at
+                    ? "✓ DP DIBAYAR"
+                    : "⏳ MENUNGGU PEMBAYARAN"}
               </Badge>
             </div>
           </div>
@@ -599,51 +942,80 @@ export default function Invoice() {
             >
               <Row label="Subtotal" value={formatRupiah(booking.total_price)} />
               <Row label="PPN (0%)" value="Rp 0" />
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  padding: "14px 0 4px",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: "#6B6660",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  Total Pembayaran
-                </span>
-                <span
-                  style={{
-                    fontFamily: "Playfair Display, Georgia, serif",
-                    fontSize: 24,
-                    color: "#C9A96E",
-                    fontWeight: 600,
-                  }}
-                >
-                  {formatRupiah(booking.total_price)}
-                </span>
-              </div>
+              
+              {/* JIKA BELUM ADA PEMBAYARAN */}
+              {!booking.dp_paid_at && !booking.full_paid_at && (
+                <>
+                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0", marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30%</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#1C1A17" }}>{formatRupiah(booking.dp_amount)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px" }}>
+                      <span style={{ fontSize: 12, color: "#8A8480" }}>Sisa 70%</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#1C1A17" }}>{formatRupiah(Math.round(booking.total_price * 0.7))}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
+                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Total Keseluruhan
+                    </span>
+                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#C9A96E", fontWeight: 600 }}>
+                      {formatRupiah(booking.total_price)}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {/* JIKA DP SUDAH DIBAYAR */}
+              {booking.dp_paid_at && !booking.full_paid_at && (
+                <>
+                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0" }}>
+                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30% (sudah dibayar)</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(booking.dp_amount)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px", background: "#FEF3C7", padding: "10px 12px", marginTop: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#92400E" }}>Sisa Pembayaran 70%</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#D97706" }}>{formatRupiah(Math.round(booking.total_price * 0.7))}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
+                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Total Keseluruhan
+                    </span>
+                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#C9A96E", fontWeight: 600 }}>
+                      {formatRupiah(booking.total_price)}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {/* JIKA SUDAH LUNAS */}
               {booking.full_paid_at && (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: "#10b981",
-                    margin: 0,
-                    textAlign: "right",
-                  }}
-                >
-                  ✓ Lunas pada{" "}
-                  {new Date(booking.full_paid_at).toLocaleDateString("id-ID", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </p>
+                <>
+                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0" }}>
+                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30%</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(booking.dp_amount)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px" }}>
+                      <span style={{ fontSize: 12, color: "#8A8480" }}>Pelunasan 70%</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(Math.round(booking.total_price * 0.7))}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
+                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Total Terbayar
+                    </span>
+                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#10b981", fontWeight: 600 }}>
+                      {formatRupiah(booking.total_price)}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#10b981", margin: "4px 0 0", textAlign: "right", fontWeight: 600 }}>
+                    ✓ LUNAS
+                  </p>
+                </>
               )}
             </div>
           </div>
@@ -785,8 +1157,7 @@ export default function Invoice() {
               </p>
             </div>
             {/* Cap lunas */}
-            {(booking.status === "confirmed" ||
-              booking.status === "completed") && (
+            {booking.full_paid_at && (
               <div
                 style={{
                   border: "2px solid #10b981",

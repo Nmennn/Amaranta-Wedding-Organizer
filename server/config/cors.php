@@ -19,6 +19,8 @@ return [
         env('FRONTEND_URL', 'http://localhost:5173'),
         'http://localhost:3000',   // jika pakai port lain
         'http://127.0.0.1:5173',
+        'http://localhost:5174',   // Vite port ketika 5173 sudah dipakai
+        'http://127.0.0.1:5174',
     ],
 
     'allowed_origins_patterns' => [],

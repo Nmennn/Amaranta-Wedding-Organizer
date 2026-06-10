@@ -369,6 +369,60 @@ class BookingController extends Controller
         ]);
     }
 
+    // POST /api/bookings/{id}/confirm-payment
+    // Endpoint untuk manual confirm pembayaran setelah Midtrans Snap onSuccess
+    // Dipanggil dari frontend setelah user berhasil di payment modal
+    public function confirmPayment(Request $request, Booking $booking): JsonResponse
+    {
+        if ($booking->customer_id !== $request->user()->id) {
+            return response()->json(['message' => 'Tidak diizinkan.'], 403);
+        }
+
+        $request->validate([
+            'payment_type' => 'required|in:dp30,full',
+        ]);
+
+        $paymentType = $request->payment_type;
+
+        // Cek apakah sudah ada payment record pending untuk type ini
+        $payment = Payment::where('booking_id', $booking->id)
+                         ->where('type', $paymentType)
+                         ->where('status', 'pending')
+                         ->latest()
+                         ->first();
+
+        if (!$payment) {
+            return response()->json(['message' => 'Pembayaran tidak ditemukan.'], 404);
+        }
+
+        // Mark payment as success
+        $payment->update([
+            'status' => 'success',
+            'paid_at' => now(),
+        ]);
+
+        // Update booking berdasarkan payment type
+        if ($paymentType === 'full') {
+            $booking->update([
+                'phase'          => 'full_paid',
+                'full_paid_at'   => now(),
+                'status'         => 'confirmed',
+                'admin_status'   => 'waiting_vendor',
+            ]);
+        } elseif ($paymentType === 'dp30') {
+            $booking->update([
+                'phase'          => 'dp_paid',
+                'dp_paid_at'     => now(),
+                'admin_status'   => 'dp_paid',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Pembayaran berhasil dikonfirmasi.',
+            'data'    => $booking->fresh(['package', 'payments']),
+        ]);
+    }
+
     // GET /api/bookings/booked-dates
     // Kembalikan array tanggal yang sudah dipesan (tidak bisa dipilih lagi)
     // Hanya tanggal dengan status aktif (bukan cancelled)
