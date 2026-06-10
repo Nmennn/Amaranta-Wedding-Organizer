@@ -42,7 +42,7 @@ const Gallery = () => {
           {filtered.map((img) => (
             <div key={img.id} onClick={() => setActive(img)}
               className="break-inside-avoid overflow-hidden cursor-pointer group relative">
-              <img src={img.src} alt={img.caption}
+              <img src={img.url} alt={img.caption}
                 className="w-full object-cover transition-all duration-700 group-hover:scale-105 group-hover:brightness-110" />
               <div className="absolute inset-0 bg-[var(--color-dark)]/0 group-hover:bg-[var(--color-dark)]/40 transition-all duration-300 flex items-end p-3">
                 <div className="translate-y-4 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-300">
