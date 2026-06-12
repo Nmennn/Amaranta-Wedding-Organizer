@@ -397,7 +397,6 @@ export default function Invoice() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "baseline",
-                padding: "12px 0",
                 background: "#FEF3C7",
                 padding: "12px",
                 marginTop: 12,
@@ -975,7 +974,7 @@ export default function Invoice() {
                       <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30% (sudah dibayar)</span>
                       <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(booking.dp_amount)}</span>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px", background: "#FEF3C7", padding: "10px 12px", marginTop: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", background: "#FEF3C7", padding: "10px 12px", marginTop: 8 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: "#92400E" }}>Sisa Pembayaran 70%</span>
                       <span style={{ fontSize: 14, fontWeight: 700, color: "#D97706" }}>{formatRupiah(Math.round(booking.total_price * 0.7))}</span>
                     </div>
