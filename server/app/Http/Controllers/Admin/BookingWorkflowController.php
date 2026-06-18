@@ -143,4 +143,54 @@ class BookingWorkflowController extends Controller
             'data'    => $booking->fresh(),
         ]);
     }
+
+    // PATCH /api/admin/bookings/{booking}/confirm-payment
+    public function confirmPayment(Request $request, Booking $booking): JsonResponse
+    {
+        $request->validate([
+            'payment_type' => 'required|in:dp30,full',
+        ]);
+
+        $paymentType = $request->payment_type;
+
+        $payment = $booking->payments()->where('type', $paymentType)->where('status', 'pending')->latest()->first();
+        if (!$payment) {
+            $payment = \App\Models\Payment::create([
+                'booking_id' => $booking->id,
+                'type'       => $paymentType,
+                'amount'     => $paymentType === 'dp30'
+                    ? ($booking->dp_amount ?: (int) round($booking->total_price * 0.3))
+                    : $booking->total_price,
+                'status'     => 'pending',
+            ]);
+        }
+
+        $payment->update([
+            'status'  => 'success',
+            'paid_at' => now(),
+        ]);
+
+        if ($paymentType === 'full') {
+            $updates = [
+                'phase'          => 'paid',
+                'full_paid_at'   => now(),
+                'status'         => 'confirmed',
+            ];
+            if ($booking->phase === 'pending') {
+                $updates['admin_status'] = 'waiting_vendor';
+            }
+            $booking->update($updates);
+        } else {
+            $booking->update([
+                'phase'          => 'dp_paid',
+                'dp_paid_at'     => now(),
+                'admin_status'   => 'waiting_vendor',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Pembayaran berhasil dikonfirmasi oleh Admin.',
+            'data'    => $booking->fresh(['vendor', 'vendorRequests.vendor', 'payments']),
+        ]);
+    }
 }

@@ -36,7 +36,7 @@ class BookingController extends Controller
     {
         $user = $request->user();
         if (!$user->isAdmin()
-            && $booking->customer_id !== $user->id
+            && (int) $booking->customer_id !== (int) $user->id
             && $booking->vendor?->user_id !== $user->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
@@ -70,6 +70,20 @@ class BookingController extends Controller
                               ->where('is_active', true)
                               ->firstOrFail();
         }
+
+        // Cek apakah tanggal pernikahan sudah dipesan (tidak cancelled)
+        $dateExists = Booking::whereNotIn('status', ['cancelled'])
+            ->whereDate('wedding_date', $request->wedding_date)
+            ->exists();
+        if ($dateExists) {
+            return response()->json([
+                'message' => 'Tanggal ini sudah dipesan. Silakan pilih tanggal lain.',
+                'errors' => [
+                    'wedding_date' => ['Tanggal ini sudah dipesan. Silakan pilih tanggal lain.']
+                ]
+            ], 422);
+        }
+
         $dp      = (int) round($package->price * 0.3);
 
         $booking = Booking::create([
@@ -101,7 +115,7 @@ class BookingController extends Controller
     // Pembayaran: bisa DP 30% atau lunas
     public function pay(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -110,34 +124,42 @@ class BookingController extends Controller
             return response()->json(['message' => 'Booking ini sudah dibayar.'], 422);
         }
 
-        // Tentukan tipe pembayaran: 'full' atau 'dp30'
-        $paymentType = $request->input('payment_type', 'full');
-        if (!in_array($paymentType, ['full', 'dp30'])) {
-            $paymentType = 'full';
+        // Pembayaran awal dipaksa hanya boleh DP 30% untuk mematuhi alur workflow
+        $paymentType = 'dp30';
+
+        // Hitung amount berdasarkan tipe pembayaran (DP 30%)
+        $amount = (int) round($booking->total_price * 0.3);
+
+        try {
+            $snapToken = Snap::getSnapToken([
+                'transaction_details' => [
+                    'order_id'     => $booking->order_id . '-' . strtoupper($paymentType) . '-' . time(),
+                    'gross_amount' => $amount,
+                ],
+                'customer_details' => [
+                    'first_name' => $booking->pemesan_name,
+                    'email'      => $booking->pemesan_email,
+                    'phone'      => $booking->pemesan_phone,
+                ],
+                'item_details' => [[
+                    'id'       => 'pay-' . $booking->id,
+                    'price'    => $amount,
+                    'quantity' => 1,
+                    'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA' . ($paymentType === 'dp30' ? ' (DP 30%)' : ''),
+                ]],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Midtrans Error:', [
+                'message' => $e->getMessage(),
+                'code'    => $e->getCode(),
+                'booking' => $booking->id,
+            ]);
+            
+            return response()->json([
+                'message' => 'Gagal memulai pembayaran. Silakan cek konfigurasi Midtrans atau coba lagi.',
+                'error'   => $e->getMessage(),
+            ], 500);
         }
-
-        // Hitung amount berdasarkan tipe pembayaran
-        $amount = $paymentType === 'dp30'
-            ? (int) round($booking->total_price * 0.3)
-            : $booking->total_price;
-
-        $snapToken = Snap::getSnapToken([
-            'transaction_details' => [
-                'order_id'     => $booking->order_id . '-' . strtoupper($paymentType) . '-' . time(),
-                'gross_amount' => $amount,
-            ],
-            'customer_details' => [
-                'first_name' => $booking->pemesan_name,
-                'email'      => $booking->pemesan_email,
-                'phone'      => $booking->pemesan_phone,
-            ],
-            'item_details' => [[
-                'id'       => 'pay-' . $booking->id,
-                'price'    => $amount,
-                'quantity' => 1,
-                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA' . ($paymentType === 'dp30' ? ' (DP 30%)' : ''),
-            ]],
-        ]);
 
         Payment::create([
             'booking_id' => $booking->id,
@@ -159,7 +181,7 @@ class BookingController extends Controller
     // Pembayaran pelunasan (70% sisa setelah DP 30%)
     public function payRemaining(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -173,27 +195,47 @@ class BookingController extends Controller
             return response()->json(['message' => 'Anda harus membayar DP terlebih dahulu.'], 422);
         }
 
+        // Cek apakah status workflow sudah mencapai 'preparation' dan sebelum hari H
+        if ($booking->admin_status !== 'preparation') {
+            return response()->json([
+                'message' => 'Sisa pembayaran baru dapat dilunasi setelah koordinasi vendor & meeting dijadwalkan (status Persiapan) dan sebelum Hari H.'
+            ], 422);
+        }
+
         // Hitung sisa pembayaran (70%)
         $dpAmount = (int) round($booking->total_price * 0.3);
         $remainingAmount = $booking->total_price - $dpAmount;
 
-        $snapToken = Snap::getSnapToken([
-            'transaction_details' => [
-                'order_id'     => $booking->order_id . '-REMAINING-' . time(),
-                'gross_amount' => $remainingAmount,
-            ],
-            'customer_details' => [
-                'first_name' => $booking->pemesan_name,
-                'email'      => $booking->pemesan_email,
-                'phone'      => $booking->pemesan_phone,
-            ],
-            'item_details' => [[
-                'id'       => 'remaining-' . $booking->id,
-                'price'    => $remainingAmount,
-                'quantity' => 1,
-                'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA (Pelunasan 70%)',
-            ]],
-        ]);
+        try {
+            $snapToken = Snap::getSnapToken([
+                'transaction_details' => [
+                    'order_id'     => $booking->order_id . '-REMAINING-' . time(),
+                    'gross_amount' => $remainingAmount,
+                ],
+                'customer_details' => [
+                    'first_name' => $booking->pemesan_name,
+                    'email'      => $booking->pemesan_email,
+                    'phone'      => $booking->pemesan_phone,
+                ],
+                'item_details' => [[
+                    'id'       => 'remaining-' . $booking->id,
+                    'price'    => $remainingAmount,
+                    'quantity' => 1,
+                    'name'     => 'Paket ' . ucfirst($booking->package->tier_id ?? '') . ' — AMARANTA (Pelunasan 70%)',
+                ]],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Midtrans Error (payRemaining):', [
+                'message' => $e->getMessage(),
+                'code'    => $e->getCode(),
+                'booking' => $booking->id,
+            ]);
+            
+            return response()->json([
+                'message' => 'Gagal memulai pembayaran. Silakan cek konfigurasi Midtrans atau coba lagi.',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
 
         Payment::create([
             'booking_id' => $booking->id,
@@ -214,7 +256,7 @@ class BookingController extends Controller
     // POST /api/bookings/{id}/rate
     public function rate(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
         if (!$booking->isFullPaid()) {
@@ -287,20 +329,24 @@ class BookingController extends Controller
             // Update booking status berdasarkan payment type
             if ($paymentType === 'full' || $paymentType === 'remaining') {
                 // Pembayaran penuh atau pelunasan sisa — booking langsung lunas
-                $booking->update([
-                    'phase'          => 'full_paid',
+                $updates = [
+                    'phase'          => 'paid',
                     'full_paid_at'   => now(),
                     'payment_method' => $type,
                     'status'         => 'confirmed',
-                    'admin_status'   => 'waiting_vendor',
-                ]);
+                ];
+                if ($booking->phase === 'pending') {
+                    $updates['admin_status'] = 'waiting_vendor';
+                }
+                $booking->update($updates);
             } elseif (in_array($paymentType, ['dp', 'dp30'])) {
                 // DP pembayaran — menunggu pelunasan
+                // BUG FIX: set admin_status ke 'waiting_vendor' agar admin bisa langsung assign vendor
                 $booking->update([
                     'phase'          => 'dp_paid',
                     'dp_paid_at'     => now(),
                     'payment_method' => $type,
-                    'admin_status'   => 'dp_paid',
+                    'admin_status'   => 'waiting_vendor',
                 ]);
             }
         } elseif (in_array($status, ['cancel', 'deny', 'expire'])) {
@@ -314,7 +360,7 @@ class BookingController extends Controller
     // Customer ubah tanggal — hanya boleh sebelum vendor confirmed
     public function reschedule(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -330,6 +376,17 @@ class BookingController extends Controller
             'wedding_date' => 'required|date|after:today',
             'reason'       => 'sometimes|nullable|string|max:500',
         ]);
+
+        // Cek apakah tanggal pernikahan baru sudah dipesan oleh booking lain
+        $dateExists = Booking::whereNotIn('status', ['cancelled'])
+            ->where('id', '!=', $booking->id)
+            ->whereDate('wedding_date', $request->wedding_date)
+            ->exists();
+        if ($dateExists) {
+            return response()->json([
+                'message' => 'Tanggal ini sudah dipesan. Silakan pilih tanggal lain.',
+            ], 422);
+        }
 
         $booking->update([
             'wedding_date' => $request->wedding_date,
@@ -347,7 +404,7 @@ class BookingController extends Controller
     // Customer batalkan booking — hanya sebelum bayar
     public function cancel(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -374,7 +431,7 @@ class BookingController extends Controller
     // Dipanggil dari frontend setelah user berhasil di payment modal
     public function confirmPayment(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->customer_id !== $request->user()->id) {
+        if ((int) $booking->customer_id !== (int) $request->user()->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -403,17 +460,20 @@ class BookingController extends Controller
 
         // Update booking berdasarkan payment type
         if ($paymentType === 'full') {
-            $booking->update([
-                'phase'          => 'full_paid',
+            $updates = [
+                'phase'          => 'paid',
                 'full_paid_at'   => now(),
                 'status'         => 'confirmed',
-                'admin_status'   => 'waiting_vendor',
-            ]);
+            ];
+            if ($booking->phase === 'pending') {
+                $updates['admin_status'] = 'waiting_vendor';
+            }
+            $booking->update($updates);
         } elseif ($paymentType === 'dp30') {
             $booking->update([
                 'phase'          => 'dp_paid',
                 'dp_paid_at'     => now(),
-                'admin_status'   => 'dp_paid',
+                'admin_status'   => 'waiting_vendor',
             ]);
         }
 
@@ -436,6 +496,45 @@ class BookingController extends Controller
             ->values();
 
         return response()->json(['data' => $dates]);
+    }
+
+    // DELETE /api/bookings/{booking}
+    public function destroy(Request $request, Booking $booking): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->isAdmin()) {
+            $booking->delete();
+            return response()->json(['message' => 'Booking berhasil dihapus.']);
+        }
+
+        if ((int) $booking->customer_id !== (int) $user->id) {
+            return response()->json(['message' => 'Tidak diizinkan.'], 403);
+        }
+
+        // Customer hanya boleh hapus booking completed atau cancelled
+        if (!in_array($booking->status, ['completed', 'cancelled'])) {
+            return response()->json(['message' => 'Hanya booking selesai atau dibatalkan yang dapat dihapus dari riwayat.'], 422);
+        }
+
+        $booking->delete();
+        return response()->json(['message' => 'Booking berhasil dihapus dari riwayat.']);
+    }
+
+    // DELETE /api/bookings
+    public function destroyAll(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->isAdmin()) {
+            Booking::query()->delete();
+            return response()->json(['message' => 'Semua data booking berhasil dikosongkan.']);
+        }
+
+        // Hapus semua booking customer yang completed atau cancelled
+        Booking::where('customer_id', $user->id)
+            ->whereIn('status', ['completed', 'cancelled'])
+            ->delete();
+
+        return response()->json(['message' => 'Semua riwayat pemesanan berhasil dibersihkan.']);
     }
 
 }

@@ -1,3 +1,12 @@
+// ============================================================
+// client/src/constants/apiRoutes.js
+// BUG FIX:
+//   1. BOOKINGS.PAY_REMAINING   — endpoint pelunasan 70%
+//   2. BOOKINGS.CONFIRM_PAYMENT — manual confirm setelah Snap
+//   3. BOOKINGS.BOOKED_DATES    — tanggal yang sudah dibooking
+//   4. BOOKINGS.CANCEL          — batalkan booking
+// ============================================================
+
 export const BASE_URL =
   import.meta.env.VITE_API_URL || "http://localhost:8000/api";
 
@@ -30,16 +39,27 @@ export const PACKAGES = {
 export const BOOKINGS = {
   MY: `${BASE_URL}/bookings/my`,
   VENDOR_INBOX: `${BASE_URL}/bookings/vendor`,
+  // BUG FIX: BOOKED_DATES ditambahkan — sebelumnya tidak ada di constants
+  BOOKED_DATES: `${BASE_URL}/bookings/booked-dates`,
   DETAIL: (id) => `${BASE_URL}/bookings/${id}`,
   CREATE: `${BASE_URL}/bookings`,
-  PAY: (id) => `${BASE_URL}/bookings/${id}/pay`, // endpoint tunggal
+  // PAY: bayar DP atau full (payment_type di body)
+  PAY: (id) => `${BASE_URL}/bookings/${id}/pay`,
+  // BUG FIX: PAY_REMAINING ditambahkan — sebelumnya tidak ada
+  PAY_REMAINING: (id) => `${BASE_URL}/bookings/${id}/pay-remaining`,
+  // BUG FIX: CONFIRM_PAYMENT ditambahkan — sebelumnya tidak ada
+  CONFIRM_PAYMENT: (id) => `${BASE_URL}/bookings/${id}/confirm-payment`,
   RESCHEDULE: (id) => `${BASE_URL}/bookings/${id}/reschedule`,
+  // BUG FIX: CANCEL ditambahkan — sebelumnya tidak ada
+  CANCEL: (id) => `${BASE_URL}/bookings/${id}/cancel`,
   RATE: (id) => `${BASE_URL}/bookings/${id}/rate`,
 };
 
 export const VENDOR_REQUESTS = {
   CONFIRM: (id) => `${BASE_URL}/vendor-requests/${id}/confirm`,
   REJECT: (id) => `${BASE_URL}/vendor-requests/${id}/reject`,
+  DELETE: (id) => `${BASE_URL}/vendor-requests/${id}`,
+  DELETE_ALL: `${BASE_URL}/vendor-requests`,
 };
 
 export const ADMIN = {

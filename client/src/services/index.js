@@ -1,3 +1,12 @@
+// ============================================================
+// client/src/services/index.js
+// BUG FIX:
+//   1. bookingService.payRemaining() — endpoint baru untuk pelunasan
+//   2. bookingService.confirmPayment() — manual confirm setelah Snap
+//   3. bookingService.getBookedDates() — untuk BookingForm date picker
+//   4. bookingService.pay() — kirim payment_type di body request
+// ============================================================
+
 import api from "./api";
 import {
   AUTH,
@@ -43,29 +52,49 @@ export const bookingService = {
   getMy: () => api.get(BOOKINGS.MY).then(d),
   getById: (id) => api.get(BOOKINGS.DETAIL(id)).then(d),
   create: (data) => api.post(BOOKINGS.CREATE, data).then(d),
-  pay: (id) => api.post(BOOKINGS.PAY(id)).then(d),
+
+  // BUG FIX: pay() sekarang kirim payment_type di body
+  // paymentType: 'dp30' (default) atau 'full'
+  pay: (id, paymentType = "dp30") =>
+    api.post(BOOKINGS.PAY(id), { payment_type: paymentType }).then(d),
+
+  // BUG FIX: payRemaining() — endpoint baru untuk pelunasan 70%
+  payRemaining: (id) => api.post(BOOKINGS.PAY_REMAINING(id)).then(d),
+
+  // BUG FIX: confirmPayment() — manual confirm setelah Snap onSuccess
+  confirmPayment: (id, paymentType) =>
+    api
+      .post(BOOKINGS.CONFIRM_PAYMENT(id), { payment_type: paymentType })
+      .then(d),
+
+  // BUG FIX: getBookedDates() — untuk BookingForm date picker
+  getBookedDates: () => api.get(BOOKINGS.BOOKED_DATES).then(d),
+
   reschedule: (id, data) => api.patch(BOOKINGS.RESCHEDULE(id), data).then(d),
+  cancel: (id) => api.patch(BOOKINGS.CANCEL(id)).then(d),
   rate: (id, data) => api.post(BOOKINGS.RATE(id), data).then(d),
+  delete: (id) => api.delete(`${BOOKINGS.CREATE}/${id}`).then(d),
+  deleteAll: () => api.delete(BOOKINGS.CREATE).then(d),
 };
 
 export const vendorRequestService = {
   getInbox: () => api.get(BOOKINGS.VENDOR_INBOX).then(d),
   confirm: (id, data) => api.post(VENDOR_REQUESTS.CONFIRM(id), data).then(d),
   reject: (id, data) => api.post(VENDOR_REQUESTS.REJECT(id), data).then(d),
+  delete: (id) => api.delete(VENDOR_REQUESTS.DELETE(id)).then(d),
+  deleteAll: () => api.delete(VENDOR_REQUESTS.DELETE_ALL).then(d),
 };
 
 export const adminService = {
   getStats: () => api.get(ADMIN.STATS).then(d),
   getUsers: (p) => api.get(ADMIN.USERS, { params: p }).then(d),
   deleteUser: (id) => api.delete(ADMIN.USER_DELETE(id)).then(d),
-
   getVendors: (p) => api.get(ADMIN.VENDORS, { params: p }).then(d),
   createVendor: (data) => api.post(ADMIN.VENDOR_CREATE, data).then(d),
   updateVendor: (id, data) => api.put(ADMIN.VENDOR_UPDATE(id), data).then(d),
   approveVendor: (id) => api.patch(ADMIN.VENDOR_APPROVE(id)).then(d),
   rejectVendor: (id) => api.patch(ADMIN.VENDOR_REJECT(id)).then(d),
   deleteVendor: (id) => api.delete(ADMIN.VENDOR_DELETE(id)).then(d),
-
   getBookings: (p) => api.get(ADMIN.BOOKINGS, { params: p }).then(d),
   assignVendor: (id, data) => api.patch(ADMIN.ASSIGN_VENDOR(id), data).then(d),
   reassignVendor: (id, data) =>
@@ -75,6 +104,8 @@ export const adminService = {
   updatePreparation: (id, pct) =>
     api.patch(ADMIN.PREPARATION(id), { preparation_progress: pct }).then(d),
   executeEvent: (id) => api.patch(ADMIN.EXECUTE_EVENT(id)).then(d),
+  confirmPayment: (id, data) =>
+    api.patch(`${ADMIN.BOOKINGS}/${id}/confirm-payment`, data).then(d),
 };
 
 export const galleryService = {

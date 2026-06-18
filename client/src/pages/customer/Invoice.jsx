@@ -1,610 +1,234 @@
 // ============================================================
 // src/pages/customer/Invoice.jsx
-// Halaman invoice yang bisa di-print/download sebagai PDF
-//
-// CARA KERJA:
-//   1. Buka via /pelanggan/invoice/:orderId
-//   2. Data diambil dari GET /api/bookings/:id
-//   3. Klik "Unduh PDF" → window.print() dengan CSS @media print
-//   4. Browser cetak/simpan sebagai PDF
+// FIX & FITUR:
+//   1. Mode DP:        Invoice untuk pembayaran DP 30%
+//   2. Mode Pelunasan: Invoice untuk pelunasan 70% — format SAMA
+//      dengan invoice DP (header, kolom, footer identik)
+//   3. BUG FIX: payment type 'dp30' & 'full' (remaining) ditangani
+//   4. Total otomatis dihitung dari booking.total_price
+//   5. Tombol bayar pelunasan memanggil endpoint yang benar
+//   6. Print / Download PDF support
 // ============================================================
+
 import { useState, useEffect, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
-import { bookingService, api } from "../../services";
-import { PACKAGES, AMARANTA_INFO, formatRupiah } from "../../data/packages";
+import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
+import { bookingService } from "../../services";
+import { api } from "../../services";
+import { PACKAGES, formatRupiah } from "../../data/packages";
 import { toastSuccess, toastError } from "../../hooks/useToast";
+import useAuthStore from "../../store/authStore";
 
-// CSS print disuntikkan ke <head> saat komponen mount
-const PRINT_CSS = `
-@media print {
-  body * { visibility: hidden !important; }
-  #invoice-area, #invoice-area * { visibility: visible !important; }
-  #invoice-area {
-    position: fixed !important;
-    inset: 0 !important;
-    width: 100% !important;
-    padding: 32px 40px !important;
-    background: white !important;
-  }
-  .no-print { display: none !important; }
-  @page {
-    size: A4 portrait;
-    margin: 0;
-  }
+// ── Konstanta tipe invoice ─────────────────────────────────────
+const INVOICE_TYPE = {
+  DP: "dp", // Sudah bayar DP
+  PELUNASAN: "pelunasan", // Sudah lunas / mau bayar pelunasan
+};
+
+// ── Helper format ─────────────────────────────────────────────
+function fmtDate(dateStr) {
+  if (!dateStr) return "-";
+  return new Date(dateStr).toLocaleDateString("id-ID", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }
-`;
 
-function Badge({ children, color = "#C9A96E" }) {
+function fmtDateShort(dateStr) {
+  if (!dateStr) return "-";
+  return new Date(dateStr).toLocaleDateString("id-ID", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+// ── Ambil data paket lokal berdasarkan tier_id ────────────────
+function getLocalPackage(tierId) {
+  return PACKAGES.find((p) => p.id === tierId?.toLowerCase()) || null;
+}
+
+// ── Status badge helper ───────────────────────────────────────
+function StatusBadge({ status }) {
+  const map = {
+    pending: {
+      label: "Menunggu Pembayaran",
+      cls: "bg-amber-50 text-amber-700 border-amber-200",
+    },
+    success: {
+      label: "Lunas",
+      cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    },
+    failed: { label: "Gagal", cls: "bg-red-50 text-red-700 border-red-200" },
+    cancelled: {
+      label: "Dibatalkan",
+      cls: "bg-gray-50 text-gray-600 border-gray-200",
+    },
+  };
+  const cfg = map[status] || map.pending;
   return (
     <span
-      style={{
-        display: "inline-block",
-        padding: "2px 10px",
-        background: color + "22",
-        color,
-        border: `1px solid ${color}55`,
-        fontSize: 11,
-        fontFamily: "DM Sans, sans-serif",
-        textTransform: "uppercase",
-        letterSpacing: "0.08em",
-      }}
+      className={`inline-block px-3 py-1 text-xs font-medium border rounded-full font-[var(--font-sans)] ${cfg.cls}`}
     >
-      {children}
+      {cfg.label}
     </span>
   );
 }
 
-function Row({ label, value, bold = false, large = false }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "baseline",
-        padding: "8px 0",
-        borderBottom: "1px solid #E5DDD0",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 13,
-          color: "#8A8480",
-          fontFamily: "DM Sans, sans-serif",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontSize: large ? 20 : bold ? 14 : 13,
-          fontWeight: bold || large ? 600 : 400,
-          color: large ? "#C9A96E" : "#1C1A17",
-          fontFamily: large
-            ? "Playfair Display, Georgia, serif"
-            : "DM Sans, sans-serif",
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
+// ============================================================
+// KOMPONEN UTAMA
+// ============================================================
 export default function Invoice() {
-  const { id } = useParams();
+  const { id } = useParams(); // booking ID
+  const navigate = useNavigate();
+  const invoiceRef = useRef(null);
+  const user = useAuthStore((s) => s.user);
+
   const [booking, setBooking] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const styleRef = useRef(null);
+  const [payLoading, setPayLoading] = useState(false);
 
-  // Inject print CSS
-  useEffect(() => {
-    const el = document.createElement("style");
-    el.id = "invoice-print-css";
-    el.textContent = PRINT_CSS;
-    document.head.appendChild(el);
-    styleRef.current = el;
-    return () => {
-      el.remove();
-    };
-  }, []);
+  // BUG FIX: query param ?type=dp | ?type=pelunasan menggunakan useSearchParams agar reactive
+  const [searchParams] = useSearchParams();
+  const typeParam = searchParams.get("type"); // 'dp' | 'pelunasan' | null
 
+  // ── Fetch booking ─────────────────────────────────────────
   useEffect(() => {
     if (!id) return;
+    setLoading(true);
     bookingService
       .getById(id)
       .then((data) => setBooking(data))
-      .catch(() => setError("Booking tidak ditemukan."))
+      .catch((err) => {
+        toastError(err.userMessage || "Booking tidak ditemukan.");
+        navigate("/pelanggan/pemesanan");
+      })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, navigate]);
 
-  // Refresh data ketika window fokus kembali (user kembali ke tab)
-  useEffect(() => {
-    const handleFocus = () => {
-      if (id && booking) {
-        bookingService
-          .getById(id)
-          .then((data) => setBooking(data))
-          .catch((err) => console.error("Failed to refresh on focus:", err));
+  if (loading) return <LoadingScreen />;
+  if (!booking) return null;
+
+  // ── Kalkulasi nilai ───────────────────────────────────────
+  const totalPrice = booking.total_price || 0;
+  const dpAmount = booking.dp_amount || Math.round(totalPrice * 0.3);
+  const sisaAmount = totalPrice - dpAmount; // 70% pelunasan
+
+  // BUG FIX: cek apakah DP sudah dibayar
+  const dpPaid = booking.payments?.some(
+    (p) => ["dp", "dp30"].includes(p.type) && p.status === "success",
+  );
+  // BUG FIX: cek apakah sudah lunas
+  const fullPaid = booking.payments?.some(
+    (p) => p.type === "full" && p.status === "success",
+  );
+
+  // Tentukan tipe invoice yang ditampilkan
+  let invoiceType;
+  if (typeParam === "pelunasan") {
+    invoiceType = INVOICE_TYPE.PELUNASAN;
+  } else if (typeParam === "dp") {
+    invoiceType = INVOICE_TYPE.DP;
+  } else {
+    // Auto-detect: jika sudah lunas → tampilkan invoice pelunasan
+    //             jika baru DP      → tampilkan invoice DP
+    invoiceType = fullPaid ? INVOICE_TYPE.PELUNASAN : INVOICE_TYPE.DP;
+  }
+
+  const isDP = invoiceType === INVOICE_TYPE.DP;
+  const invoiceAmount = isDP ? dpAmount : sisaAmount;
+
+  // Ambil data payment yang relevan untuk invoice ini
+  const relevantPayment = isDP
+    ? (booking.payments?.find((p) => ["dp", "dp30"].includes(p.type) && p.status === "success") ||
+       booking.payments?.find((p) => ["dp", "dp30"].includes(p.type) && p.status === "pending") ||
+       booking.payments?.find((p) => ["dp", "dp30"].includes(p.type)))
+    : (booking.payments?.find((p) => p.type === "full" && p.status === "success") ||
+       booking.payments?.find((p) => p.type === "full" && p.status === "pending") ||
+       booking.payments?.find((p) => p.type === "full"));
+
+  const localPkg = getLocalPackage(booking.package?.tier_id);
+
+  // Nomor invoice: AMRT-{order_id}-{DP|PLN}
+  const invoiceNo = `${booking.order_id}-${isDP ? "DP" : "PLN"}`;
+
+  // Tanggal invoice: tanggal payment atau booking created_at atau sekarang
+  const invoiceDate = relevantPayment?.paid_at
+    ? fmtDateShort(relevantPayment.paid_at)
+    : booking.created_at
+      ? fmtDateShort(booking.created_at)
+      : fmtDateShort(new Date().toISOString());
+
+  // ── Handler: bayar pelunasan ──────────────────────────────
+  async function handlePayPelunasan() {
+    setPayLoading(true);
+    try {
+      // BUG FIX: panggil endpoint pay dengan payment_type yang benar
+      // Server mendukung: 'full' untuk pelunasan sisa
+      const res = await api.post(`/bookings/${booking.id}/pay`, {
+        payment_type: "full",
+      });
+      const { snap_token, client_key } = res.data;
+
+      if (!snap_token) throw new Error("Snap token tidak ditemukan.");
+
+      // BUG FIX: cek apakah Midtrans Snap sudah di-load
+      if (typeof window.snap === "undefined") {
+        toastError("Midtrans Snap belum dimuat. Coba refresh halaman.");
+        return;
       }
-    };
 
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [id, booking]);
+      window.snap.pay(snap_token, {
+        onSuccess: async (result) => {
+          try {
+            await bookingService.confirmPayment(booking.id, "full");
+            toastSuccess("Pembayaran pelunasan berhasil!");
+            // Refresh data booking
+            const updated = await bookingService.getById(booking.id);
+            setBooking(updated);
+          } catch (err) {
+            console.error("Confirm error:", err);
+            toastError("Gagal mengonfirmasi pembayaran.");
+          }
+        },
+        onPending: () => {
+          toastSuccess(
+            "Pembayaran pending. Segera selesaikan pembayaran Anda.",
+          );
+        },
+        onError: (err) => {
+          toastError(
+            "Pembayaran gagal: " + (err?.message || "Terjadi kesalahan."),
+          );
+        },
+        onClose: () => {
+          // User tutup popup — jangan lakukan apa-apa
+        },
+      });
+    } catch (err) {
+      toastError(err.userMessage || "Gagal memulai pembayaran. Coba lagi.");
+    } finally {
+      setPayLoading(false);
+    }
+  }
 
+  // ── Handler: print ────────────────────────────────────────
   function handlePrint() {
     window.print();
   }
 
-  async function handlePayDP() {
-    if (!booking) return;
-    setPaymentLoading(true);
-    try {
-      const res = await api.post(`/bookings/${booking.id}/pay`, {
-        payment_type: "dp30",
-      });
-      const snapToken = res.data?.snap_token || res.data?.data?.snap_token;
-      if (
-        typeof window !== "undefined" &&
-        typeof window.snap !== "undefined" &&
-        snapToken
-      ) {
-        window.snap.pay(snapToken, {
-          onSuccess: async () => {
-            toastSuccess("Pembayaran berhasil! Memproses...");
-            try {
-              // Step 1: Confirm payment ke backend
-              await api.post(`/bookings/${booking.id}/confirm-payment`, {
-                payment_type: "dp30",
-              });
-              
-              // Step 2: Wait sebentar untuk processing
-              await new Promise(resolve => setTimeout(resolve, 1500));
-              
-              // Step 3: Fetch booking data terbaru
-              const updatedBooking = await bookingService.getById(booking.id);
-              setBooking(updatedBooking);
-              toastSuccess("Invoice siap ditampilkan!");
-              
-              // Step 4: Scroll ke atas
-              setTimeout(() => {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }, 300);
-            } catch (err) {
-              console.error("Failed to confirm payment:", err);
-              toastError(err.response?.data?.message || "Gagal mengonfirmasi pembayaran");
-              
-              // Fallback: tunggu lebih lama dan coba refresh data
-              setTimeout(async () => {
-                try {
-                  const freshBooking = await bookingService.getById(booking.id);
-                  setBooking(freshBooking);
-                } catch (e) {
-                  console.error("Fallback refresh failed:", e);
-                }
-              }, 3000);
-            }
-            setPaymentLoading(false);
-          },
-          onPending: () => {
-            toastError("Pembayaran pending. Cek email untuk instruksi.");
-            setPaymentLoading(false);
-          },
-          onError: () => {
-            toastError("Pembayaran gagal. Coba lagi.");
-            setPaymentLoading(false);
-          },
-          onClose: () => setPaymentLoading(false),
-        });
-      } else {
-        toastError("Midtrans tidak siap. Coba beberapa saat lagi.");
-        setPaymentLoading(false);
-      }
-    } catch (err) {
-      toastError(err.userMessage || "Gagal memproses pembayaran");
-      setPaymentLoading(false);
-    }
-  }
-
-  if (loading)
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#FAF7F2",
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              border: "2px solid #C9A96E",
-              borderTopColor: "transparent",
-              borderRadius: "50%",
-              animation: "spin 0.8s linear infinite",
-              margin: "0 auto 12px",
-            }}
-          />
-          <p
-            style={{
-              fontSize: 13,
-              color: "#8A8480",
-              fontFamily: "DM Sans, sans-serif",
-            }}
-          >
-            Memuat invoice...
-          </p>
-        </div>
-      </div>
-    );
-
-  if (error || !booking)
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#FAF7F2",
-          gap: 16,
-        }}
-      >
-        <p
-          style={{
-            fontSize: 14,
-            color: "#8A8480",
-            fontFamily: "DM Sans, sans-serif",
-          }}
-        >
-          {error || "Invoice tidak tersedia."}
-        </p>
-        <Link
-          to="/pelanggan/pemesanan"
-          style={{
-            color: "#C9A96E",
-            fontSize: 13,
-            fontFamily: "DM Sans, sans-serif",
-          }}
-        >
-          ← Kembali ke Pemesanan
-        </Link>
-      </div>
-    );
-
-  // ── Kalkulasi ────────────────────────────────────────────────
-  const pkg = PACKAGES.find((p) => p.id === booking.package?.tier_id) || {};
-  const tierColor = pkg.color || "#C9A96E";
-  const tierLabel = booking.package?.tier_id
-    ? booking.package.tier_id.charAt(0).toUpperCase() +
-      booking.package.tier_id.slice(1)
-    : "—";
-  const paidAt =
-    booking.full_paid_at || booking.dp_paid_at || booking.created_at;
-  const invoiceNo = "INV-" + booking.order_id?.replace("AMRT-", "");
-  const invoiceType = booking.full_paid_at ? "LUNAS" : booking.dp_paid_at ? "DP 30%" : "PENDING";
-  const statusColor =
-    booking.full_paid_at
-      ? "#10b981"
-      : booking.dp_paid_at
-        ? "#F59E0B"
-        : booking.status === "confirmed"
-          ? "#C9A96E"
-          : "#8A8480";
-
-  // ── Jika belum ada pembayaran, tampilkan halaman pembayaran DP ──
-  if (!booking.dp_paid_at && !booking.full_paid_at) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#FAF7F2",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 24,
-          padding: "24px",
-        }}
-      >
-        <div style={{ textAlign: "center", maxWidth: 450 }}>
-          <h1
-            style={{
-              fontFamily: "Playfair Display, Georgia, serif",
-              fontSize: 32,
-              color: "#1C1A17",
-              margin: "0 0 8px",
-            }}
-          >
-            Lanjutkan Pembayaran DP
-          </h1>
-          <p
-            style={{
-              fontSize: 14,
-              color: "#8A8480",
-              margin: "0 0 24px",
-              lineHeight: 1.6,
-            }}
-          >
-            Invoice Anda akan muncul setelah menyelesaikan pembayaran DP 30%. Klik tombol di bawah untuk memulai pembayaran.
-          </p>
-
-          {/* Package Summary */}
-          <div
-            style={{
-              background: "white",
-              border: "1px solid #E5DDD0",
-              borderRadius: 8,
-              padding: 20,
-              marginBottom: 24,
-              textAlign: "left",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 16,
-                paddingBottom: 12,
-                borderBottom: "1px solid #E5DDD0",
-              }}
-            >
-              <div>
-                <p
-                  style={{
-                    fontSize: 13,
-                    color: "#8A8480",
-                    margin: 0,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  Paket Dipilih
-                </p>
-                <p
-                  style={{
-                    fontSize: 16,
-                    color: "#1C1A17",
-                    fontWeight: 600,
-                    margin: "4px 0 0",
-                  }}
-                >
-                  {pkg.tier}
-                </p>
-              </div>
-              <p
-                style={{
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: tierColor,
-                  margin: 0,
-                }}
-              >
-                {formatRupiah(booking.total_price)}
-              </p>
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                background: "#FEF3C7",
-                padding: "12px",
-                marginTop: 12,
-                borderRadius: 6,
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>
-                DP 30% yang harus dibayar
-              </span>
-              <span
-                style={{
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: "#D97706",
-                }}
-              >
-                {formatRupiah(booking.dp_amount)}
-              </span>
-            </div>
-          </div>
-
-          {/* Payment Button */}
-          <button
-            onClick={handlePayDP}
-            disabled={paymentLoading}
-            style={{
-              width: "100%",
-              padding: "14px 24px",
-              background: paymentLoading ? "#A8A29E" : "#C9A96E",
-              border: "none",
-              color: "#1C1A17",
-              fontSize: 14,
-              fontFamily: "DM Sans, sans-serif",
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              cursor: paymentLoading ? "not-allowed" : "pointer",
-              opacity: paymentLoading ? 0.6 : 1,
-              borderRadius: 6,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            {paymentLoading ? (
-              <>
-                <span
-                  style={{
-                    width: 14,
-                    height: 14,
-                    border: "2px solid #1C1A17",
-                    borderTopColor: "transparent",
-                    borderRadius: "50%",
-                    animation: "spin 0.8s linear infinite",
-                  }}
-                />
-                Memproses...
-              </>
-            ) : (
-              <>💳 Bayar DP Sekarang</>
-            )}
-          </button>
-
+  return (
+    <div className="min-h-screen bg-[var(--color-cream)] print:bg-white">
+      {/* ── Toolbar (disembunyikan saat print) ── */}
+      <div className="print:hidden bg-white border-b border-[var(--color-cream-border)] sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           <Link
             to="/pelanggan/pemesanan"
-            style={{
-              fontSize: 13,
-              color: "#C9A96E",
-              textDecoration: "none",
-              marginTop: 16,
-              display: "block",
-            }}
-          >
-            ← Kembali
-          </Link>
-
-          <button
-            onClick={async () => {
-              try {
-                setLoading(true);
-                const updatedBooking = await bookingService.getById(booking.id);
-                setBooking(updatedBooking);
-              } catch (err) {
-                toastError("Gagal refresh data: " + err.message);
-              } finally {
-                setLoading(false);
-              }
-            }}
-            style={{
-              marginTop: 12,
-              padding: "8px 16px",
-              background: "#E5DDD0",
-              border: "none",
-              color: "#8A8480",
-              fontSize: 12,
-              fontFamily: "DM Sans, sans-serif",
-              cursor: "pointer",
-              borderRadius: 4,
-              display: "block",
-              margin: "16px auto 0",
-            }}
-          >
-            🔄 Refresh Pembayaran
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Jika sudah ada pembayaran, tampilkan invoice lengkap ──
-
-  return (
-    <div
-      style={{ minHeight: "100vh", background: "#FAF7F2", paddingBottom: 60 }}
-    >
-      {/* ── Toolbar (no-print) ── */}
-      <div
-        className="no-print"
-        style={{
-          background: "#1C1A17",
-          padding: "14px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 16,
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-        }}
-      >
-        <Link
-          to="/pelanggan/pemesanan"
-          style={{
-            color: "#ffffff88",
-            fontSize: 12,
-            fontFamily: "DM Sans, sans-serif",
-            textDecoration: "none",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-          }}
-        >
-          ← Pemesanan Saya
-        </Link>
-        <div style={{ display: "flex", gap: 10 }}>
-          {!booking?.dp_paid_at && (
-            <button
-              onClick={handlePayDP}
-              disabled={paymentLoading}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 20px",
-                background: paymentLoading ? "#A8A29E" : "#C9A96E",
-                border: "none",
-                color: "#1C1A17",
-                fontSize: 12,
-                fontFamily: "DM Sans, sans-serif",
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                cursor: paymentLoading ? "not-allowed" : "pointer",
-                opacity: paymentLoading ? 0.6 : 1,
-              }}
-            >
-              {paymentLoading ? (
-                <>
-                  <span
-                    style={{
-                      width: 12,
-                      height: 12,
-                      border: "2px solid #1C1A17",
-                      borderTopColor: "transparent",
-                      borderRadius: "50%",
-                      animation: "spin 0.8s linear infinite",
-                    }}
-                  />
-                  Memproses...
-                </>
-              ) : (
-                <>
-                  💳 Bayar DP ({formatRupiah(booking?.dp_amount || 0)})
-                </>
-              )}
-            </button>
-          )}
-          <button
-            onClick={handlePrint}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 20px",
-              background: "#C9A96E",
-              border: "none",
-              color: "#1C1A17",
-              fontSize: 12,
-              fontFamily: "DM Sans, sans-serif",
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              cursor: "pointer",
-            }}
+            className="flex items-center gap-2 text-sm text-[var(--color-dark-muted)] hover:text-[var(--color-dark)] font-[var(--font-sans)] transition-colors"
           >
             <svg
-              width="15"
-              height="15"
+              className="w-4 h-4"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -613,594 +237,538 @@ export default function Invoice() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+                d="M15 19l-7-7 7-7"
               />
             </svg>
-            Unduh / Cetak PDF
-          </button>
+            Kembali ke Pemesanan
+          </Link>
+
+          <div className="flex items-center gap-2">
+            {/* Tombol switch DP ↔ Pelunasan */}
+            {dpPaid && !fullPaid && (
+              <Link
+                to={`/pelanggan/invoice/${booking.id}?type=${isDP ? "pelunasan" : "dp"}`}
+                className="px-3 py-1.5 text-xs border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-colors"
+              >
+                Lihat Invoice {isDP ? "Pelunasan" : "DP"}
+              </Link>
+            )}
+            {dpPaid && fullPaid && (
+              <Link
+                to={`/pelanggan/invoice/${booking.id}?type=${isDP ? "pelunasan" : "dp"}`}
+                className="px-3 py-1.5 text-xs border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-colors"
+              >
+                Lihat Invoice {isDP ? "Pelunasan" : "DP"}
+              </Link>
+            )}
+
+            {/* Bayar pelunasan jika DP sudah bayar tapi belum lunas dan sedang di halaman pelunasan */}
+            {!isDP && dpPaid && !fullPaid && booking.admin_status === "preparation" && (
+              <button
+                onClick={handlePayPelunasan}
+                disabled={payLoading}
+                className="px-4 py-1.5 bg-[var(--color-gold)] text-[var(--color-dark)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:bg-[var(--color-gold-light)] transition-colors disabled:opacity-50"
+              >
+                {payLoading
+                  ? "Memproses..."
+                  : `Bayar ${formatRupiah(sisaAmount)}`}
+              </button>
+            )}
+
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-colors"
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+                />
+              </svg>
+              Cetak / PDF
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── Area Invoice ── */}
-      <div style={{ maxWidth: 720, margin: "32px auto", padding: "0 16px" }}>
+      {/* ── DOKUMEN INVOICE ── */}
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 print:py-0 print:px-0 print:max-w-full">
         <div
-          id="invoice-area"
-          style={{
-            background: "white",
-            border: "1px solid #E5DDD0",
-            padding: "48px 52px",
-            fontFamily: "DM Sans, sans-serif",
-          }}
+          ref={invoiceRef}
+          className="bg-white shadow-[var(--shadow-luxury)] print:shadow-none"
         >
-          {/* Header */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              marginBottom: 40,
-            }}
-          >
-            {/* Brand */}
-            <div>
-              <p
-                style={{
-                  fontFamily: "Playfair Display, Georgia, serif",
-                  fontSize: 28,
-                  letterSpacing: "0.2em",
-                  color: "#1C1A17",
-                  margin: 0,
-                  marginBottom: 4,
-                }}
-              >
-                AMARANTA
-              </p>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "#8A8480",
-                  margin: 0,
-                  letterSpacing: "0.05em",
-                }}
-              >
-                Wedding Organizer
-              </p>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "#8A8480",
-                  margin: "2px 0 0",
-                  letterSpacing: "0.05em",
-                }}
-              >
-                {AMARANTA_INFO.location}
-              </p>
-              <p style={{ fontSize: 11, color: "#8A8480", margin: "1px 0 0" }}>
-                {AMARANTA_INFO.email}
-              </p>
-            </div>
+          {/* ══════════════════════════════════════════════
+              HEADER INVOICE (SAMA untuk DP dan Pelunasan)
+          ══════════════════════════════════════════════ */}
+          <div className="px-8 pt-8 pb-6 border-b border-[var(--color-cream-border)]">
+            <div className="flex items-start justify-between gap-4">
+              {/* Brand */}
+              <div>
+                <h1 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)] tracking-widest">
+                  AMARANTA
+                </h1>
+                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mt-0.5">
+                  Wedding Organizer
+                </p>
+                <div className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] mt-3 space-y-0.5">
+                  <p>Jakarta & Seluruh Indonesia</p>
+                  <p>halo@amaranta.id</p>
+                  <p>+62 811-0000-1234</p>
+                </div>
+              </div>
 
-            {/* Invoice Info */}
-            <div style={{ textAlign: "right" }}>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "#8A8480",
-                  margin: 0,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                }}
-              >
-                Invoice
-              </p>
-              <p
-                style={{
-                  fontFamily: "Playfair Display, Georgia, serif",
-                  fontSize: 20,
-                  color: "#C9A96E",
-                  margin: "4px 0 8px",
-                  letterSpacing: "0.05em",
-                }}
-              >
-                {invoiceNo}
-              </p>
-              <Badge color={statusColor}>
-                {booking.full_paid_at
-                  ? "✓ LUNAS"
-                  : booking.dp_paid_at
-                    ? "✓ DP DIBAYAR"
-                    : "⏳ MENUNGGU PEMBAYARAN"}
-              </Badge>
+              {/* Tipe & Nomor Invoice */}
+              <div className="text-right">
+                <div
+                  className={[
+                    "inline-block px-4 py-1.5 text-sm font-semibold font-[var(--font-sans)] uppercase tracking-widest mb-3",
+                    isDP
+                      ? "bg-[var(--color-gold-pale)] text-[var(--color-gold)]"
+                      : "bg-[var(--color-dark)] text-[var(--color-cream)]",
+                  ].join(" ")}
+                >
+                  {isDP ? "Invoice DP 30%" : "Invoice Pelunasan 70%"}
+                </div>
+                <div className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] space-y-1">
+                  <p>
+                    <span className="text-[var(--color-slate)]">
+                      No. Invoice:
+                    </span>{" "}
+                    <strong className="text-[var(--color-dark)]">
+                      {invoiceNo}
+                    </strong>
+                  </p>
+                  <p>
+                    <span className="text-[var(--color-slate)]">
+                      No. Booking:
+                    </span>{" "}
+                    <strong className="text-[var(--color-dark)]">
+                      {booking.order_id}
+                    </strong>
+                  </p>
+                  <p>
+                    <span className="text-[var(--color-slate)]">
+                      Tanggal Invoice:
+                    </span>{" "}
+                    {invoiceDate}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Garis emas */}
-          <div
-            style={{
-              height: 1,
-              background:
-                "linear-gradient(90deg, transparent, #C9A96E, transparent)",
-              marginBottom: 36,
-            }}
-          />
-
-          {/* 2 kolom: Ditagihkan ke + Detail Pembayaran */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 32,
-              marginBottom: 36,
-            }}
-          >
-            {/* Ditagihkan ke */}
+          {/* ══════════════════════════════════════════════
+              INFO KLIEN & ACARA (SAMA untuk DP dan Pelunasan)
+          ══════════════════════════════════════════════ */}
+          <div className="px-8 py-6 grid grid-cols-1 sm:grid-cols-2 gap-6 border-b border-[var(--color-cream-border)]">
+            {/* Data Pemesan */}
             <div>
-              <p
-                style={{
-                  fontSize: 10,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.15em",
-                  color: "#8A8480",
-                  marginBottom: 10,
-                }}
-              >
+              <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-3">
                 Ditagihkan Kepada
               </p>
-              <p
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "#1C1A17",
-                  margin: "0 0 2px",
-                }}
-              >
+              <p className="text-sm font-semibold text-[var(--color-dark)] font-[var(--font-sans)]">
                 {booking.pemesan_name}
               </p>
-              <p style={{ fontSize: 13, color: "#6B6660", margin: "2px 0" }}>
+              <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] mt-0.5">
                 {booking.pemesan_email}
               </p>
-              <p style={{ fontSize: 13, color: "#6B6660", margin: "2px 0" }}>
+              <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]">
                 {booking.pemesan_phone}
               </p>
             </div>
 
-            {/* Info invoice */}
+            {/* Detail Acara */}
             <div>
-              <p
-                style={{
-                  fontSize: 10,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.15em",
-                  color: "#8A8480",
-                  marginBottom: 10,
-                }}
-              >
-                Detail Invoice
+              <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-3">
+                Detail Acara
               </p>
-              {[
-                { l: "No. Order", v: booking.order_id },
-                {
-                  l: "Tgl. Invoice",
-                  v: paidAt
-                    ? new Date(paidAt).toLocaleDateString("id-ID", {
-                        day: "numeric",
-                        month: "long",
-                        year: "numeric",
-                      })
-                    : "—",
-                },
-                {
-                  l: "Metode Bayar",
-                  v: booking.payment_method?.toUpperCase() || "—",
-                },
-              ].map(({ l, v }) => (
-                <div
-                  key={l}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginBottom: 4,
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: "#8A8480" }}>{l}</span>
-                  <span
-                    style={{ fontSize: 12, color: "#1C1A17", fontWeight: 500 }}
-                  >
-                    {v}
+              <div className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] space-y-1">
+                <p>
+                  <span className="text-[var(--color-slate)]">
+                    Tanggal Pernikahan:
+                  </span>{" "}
+                  <strong className="text-[var(--color-dark)]">
+                    {fmtDate(booking.wedding_date)}
+                  </strong>
+                </p>
+                <p>
+                  <span className="text-[var(--color-slate)]">Lokasi:</span>{" "}
+                  {booking.location || "-"}
+                </p>
+                <p>
+                  <span className="text-[var(--color-slate)]">Konsep:</span>{" "}
+                  {booking.konsep || "-"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ══════════════════════════════════════════════
+              TABEL ITEM (FORMAT SAMA untuk DP dan Pelunasan)
+          ══════════════════════════════════════════════ */}
+          <div className="px-8 py-6">
+            <table className="w-full text-sm font-[var(--font-sans)]">
+              <thead>
+                <tr className="border-b-2 border-[var(--color-dark)]">
+                  <th className="text-left py-2 text-xs uppercase tracking-widest text-[var(--color-slate)]">
+                    Deskripsi
+                  </th>
+                  <th className="text-center py-2 text-xs uppercase tracking-widest text-[var(--color-slate)] w-20">
+                    Qty
+                  </th>
+                  <th className="text-right py-2 text-xs uppercase tracking-widest text-[var(--color-slate)] w-36">
+                    Harga
+                  </th>
+                  <th className="text-right py-2 text-xs uppercase tracking-widest text-[var(--color-slate)] w-36">
+                    Subtotal
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* ── Baris 1: Paket ── */}
+                <tr className="border-b border-[var(--color-cream-border)]">
+                  <td className="py-4">
+                    <p className="font-medium text-[var(--color-dark)]">
+                      Paket{" "}
+                      {booking.package?.tier_id
+                        ? booking.package.tier_id.charAt(0).toUpperCase() +
+                          booking.package.tier_id.slice(1)
+                        : ""}{" "}
+                      — AMARANTA Wedding Organizer
+                    </p>
+                    {localPkg && (
+                      <p className="text-xs text-[var(--color-slate)] mt-0.5">
+                        {localPkg.tagline} · {localPkg.guests} ·{" "}
+                        {localPkg.duration}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {(localPkg?.includes || []).slice(0, 4).map((inc) => (
+                        <span
+                          key={inc.label}
+                          className="text-[10px] px-1.5 py-0.5 bg-[var(--color-gold-pale)] text-[var(--color-gold)] font-[var(--font-sans)]"
+                        >
+                          {inc.label}
+                        </span>
+                      ))}
+                      {(localPkg?.includes?.length || 0) > 4 && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-[var(--color-parchment)] text-[var(--color-dark-muted)] font-[var(--font-sans)]">
+                          +{localPkg.includes.length - 4} lainnya
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-4 text-center text-[var(--color-dark-muted)]">
+                    1
+                  </td>
+                  <td className="py-4 text-right text-[var(--color-dark-muted)]">
+                    {formatRupiah(totalPrice)}
+                  </td>
+                  <td className="py-4 text-right font-medium text-[var(--color-dark)]">
+                    {formatRupiah(totalPrice)}
+                  </td>
+                </tr>
+
+                {/* ── Baris 2: Potongan DP (hanya di invoice pelunasan) ── */}
+                {!isDP && (
+                  <tr className="border-b border-[var(--color-cream-border)]">
+                    <td className="py-3">
+                      <p className="text-[var(--color-dark-muted)]">
+                        Dikurangi: DP yang Telah Dibayar (30%)
+                      </p>
+                      {booking.dp_paid_at && (
+                        <p className="text-xs text-[var(--color-slate)] mt-0.5">
+                          Dibayar pada: {fmtDateShort(booking.dp_paid_at)}
+                        </p>
+                      )}
+                    </td>
+                    <td className="py-3 text-center text-[var(--color-dark-muted)]">
+                      1
+                    </td>
+                    <td className="py-3 text-right text-emerald-600">
+                      −{formatRupiah(dpAmount)}
+                    </td>
+                    <td className="py-3 text-right font-medium text-emerald-600">
+                      −{formatRupiah(dpAmount)}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ══════════════════════════════════════════════
+              RINGKASAN TOTAL (FORMAT SAMA untuk DP dan Pelunasan)
+          ══════════════════════════════════════════════ */}
+          <div className="px-8 pb-8">
+            <div className="ml-auto max-w-sm">
+              {/* Subtotal */}
+              <div className="flex justify-between text-sm font-[var(--font-sans)] py-2 border-b border-[var(--color-cream-border)]">
+                <span className="text-[var(--color-dark-muted)]">
+                  Total Paket
+                </span>
+                <span className="text-[var(--color-dark)]">
+                  {formatRupiah(totalPrice)}
+                </span>
+              </div>
+
+              {/* Jika invoice pelunasan: tampilkan DP yang sudah dibayar */}
+              {!isDP && (
+                <div className="flex justify-between text-sm font-[var(--font-sans)] py-2 border-b border-[var(--color-cream-border)]">
+                  <span className="text-[var(--color-dark-muted)]">
+                    DP Dibayar (30%)
+                  </span>
+                  <span className="text-emerald-600">
+                    −{formatRupiah(dpAmount)}
                   </span>
                 </div>
-              ))}
-            </div>
-          </div>
+              )}
 
-          {/* Tabel layanan */}
-          <div style={{ marginBottom: 32 }}>
-            <p
-              style={{
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.15em",
-                color: "#8A8480",
-                marginBottom: 12,
-              }}
-            >
-              Rincian Layanan
-            </p>
+              {/* Jika invoice DP: tampilkan sisa yang harus dibayar nanti */}
+              {isDP && (
+                <div className="flex justify-between text-sm font-[var(--font-sans)] py-2 border-b border-[var(--color-cream-border)]">
+                  <span className="text-[var(--color-dark-muted)]">
+                    Sisa Pelunasan (70%)
+                  </span>
+                  <span className="text-[var(--color-dark-muted)]">
+                    {formatRupiah(sisaAmount)}
+                  </span>
+                </div>
+              )}
 
-            {/* Header tabel */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto auto",
-                padding: "10px 14px",
-                background: "#FAF7F2",
-                borderBottom: "2px solid #E5DDD0",
-              }}
-            >
-              {["Layanan", "Qty", "Harga"].map((h, i) => (
-                <p
-                  key={h}
-                  style={{
-                    fontSize: 10,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    color: "#8A8480",
-                    margin: 0,
-                    textAlign: i === 2 ? "right" : "left",
-                  }}
+              {/* TOTAL TAGIHAN INVOICE INI */}
+              <div
+                className={[
+                  "flex justify-between font-[var(--font-sans)] py-3 border-b-2",
+                  isDP
+                    ? "border-[var(--color-gold)]"
+                    : "border-[var(--color-dark)]",
+                ].join(" ")}
+              >
+                <span className="font-semibold text-[var(--color-dark)]">
+                  {isDP ? "Jumlah DP (30%)" : "Jumlah Pelunasan (70%)"}
+                </span>
+                <span
+                  className={[
+                    "text-xl font-bold",
+                    isDP
+                      ? "text-[var(--color-gold)]"
+                      : "text-[var(--color-dark)]",
+                  ].join(" ")}
                 >
-                  {h}
-                </p>
-              ))}
-            </div>
+                  {formatRupiah(invoiceAmount)}
+                </span>
+              </div>
 
-            {/* Baris paket */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto auto",
-                padding: "16px 14px",
-                borderBottom: "1px solid #E5DDD0",
-                alignItems: "start",
-              }}
-            >
-              <div>
-                <p
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "#1C1A17",
-                    margin: "0 0 3px",
-                  }}
-                >
-                  Paket {tierLabel} — AMARANTA Wedding Organizer
-                </p>
-                <p style={{ fontSize: 12, color: "#8A8480", margin: 0 }}>
-                  {booking.konsep && `Konsep: ${booking.konsep} · `}
-                  {booking.wedding_date} · {booking.location}
-                </p>
-                {/* Item layanan dari PACKAGES */}
-                {pkg.includes?.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    {pkg.includes.map((item, i) => (
-                      <p
-                        key={i}
-                        style={{
-                          fontSize: 11,
-                          color: "#6B6660",
-                          margin: "2px 0",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <span style={{ color: tierColor, fontSize: 9 }}>✓</span>
-                        {item.label}
-                        {item.detail && (
-                          <span style={{ color: "#A8A29E" }}>
-                            — {item.detail}
-                          </span>
-                        )}
-                      </p>
-                    ))}
-                  </div>
+              {/* Status pembayaran */}
+              <div className="flex justify-between items-center py-3 text-sm font-[var(--font-sans)]">
+                <span className="text-[var(--color-dark-muted)]">Status</span>
+                {relevantPayment ? (
+                  <StatusBadge status={relevantPayment.status} />
+                ) : (
+                  <StatusBadge status="pending" />
                 )}
               </div>
-              <p
-                style={{
-                  fontSize: 13,
-                  color: "#1C1A17",
-                  margin: 0,
-                  paddingLeft: 24,
-                  textAlign: "center",
-                }}
-              >
-                1
-              </p>
-              <p
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: "#1C1A17",
-                  margin: 0,
-                  textAlign: "right",
-                }}
-              >
-                {formatRupiah(booking.total_price)}
-              </p>
-            </div>
 
-            {/* Total */}
-            <div
-              style={{
-                padding: "12px 14px 0",
-                display: "flex",
-                flexDirection: "column",
-                gap: 0,
-              }}
-            >
-              <Row label="Subtotal" value={formatRupiah(booking.total_price)} />
-              <Row label="PPN (0%)" value="Rp 0" />
-              
-              {/* JIKA BELUM ADA PEMBAYARAN */}
-              {!booking.dp_paid_at && !booking.full_paid_at && (
-                <>
-                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0", marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30%</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#1C1A17" }}>{formatRupiah(booking.dp_amount)}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px" }}>
-                      <span style={{ fontSize: 12, color: "#8A8480" }}>Sisa 70%</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#1C1A17" }}>{formatRupiah(Math.round(booking.total_price * 0.7))}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
-                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Total Keseluruhan
-                    </span>
-                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#C9A96E", fontWeight: 600 }}>
-                      {formatRupiah(booking.total_price)}
-                    </span>
-                  </div>
-                </>
+              {/* Metode pembayaran (jika sudah bayar) */}
+              {relevantPayment?.payment_type && (
+                <div className="flex justify-between items-center py-2 text-xs font-[var(--font-sans)]">
+                  <span className="text-[var(--color-slate)]">Metode</span>
+                  <span className="text-[var(--color-dark-muted)] capitalize">
+                    {relevantPayment.payment_type.replace(/_/g, " ")}
+                  </span>
+                </div>
               )}
 
-              {/* JIKA DP SUDAH DIBAYAR */}
-              {booking.dp_paid_at && !booking.full_paid_at && (
-                <>
-                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0" }}>
-                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30% (sudah dibayar)</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(booking.dp_amount)}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", background: "#FEF3C7", padding: "10px 12px", marginTop: 8 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: "#92400E" }}>Sisa Pembayaran 70%</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "#D97706" }}>{formatRupiah(Math.round(booking.total_price * 0.7))}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
-                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Total Keseluruhan
-                    </span>
-                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#C9A96E", fontWeight: 600 }}>
-                      {formatRupiah(booking.total_price)}
-                    </span>
-                  </div>
-                </>
-              )}
-
-              {/* JIKA SUDAH LUNAS */}
-              {booking.full_paid_at && (
-                <>
-                  <div style={{ paddingTop: 12, borderTop: "2px solid #E5DDD0" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0" }}>
-                      <span style={{ fontSize: 12, color: "#8A8480" }}>DP 30%</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(booking.dp_amount)}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0 12px" }}>
-                      <span style={{ fontSize: 12, color: "#8A8480" }}>Pelunasan 70%</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#10b981" }}>✓ {formatRupiah(Math.round(booking.total_price * 0.7))}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0 4px", borderTop: "2px solid #E5DDD0" }}>
-                    <span style={{ fontSize: 13, color: "#6B6660", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Total Terbayar
-                    </span>
-                    <span style={{ fontFamily: "Playfair Display, Georgia, serif", fontSize: 24, color: "#10b981", fontWeight: 600 }}>
-                      {formatRupiah(booking.total_price)}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 11, color: "#10b981", margin: "4px 0 0", textAlign: "right", fontWeight: 600 }}>
-                    ✓ LUNAS
-                  </p>
-                </>
+              {/* Tanggal bayar (jika sudah bayar) */}
+              {relevantPayment?.paid_at && (
+                <div className="flex justify-between items-center py-2 text-xs font-[var(--font-sans)]">
+                  <span className="text-[var(--color-slate)]">
+                    Tanggal Bayar
+                  </span>
+                  <span className="text-[var(--color-dark-muted)]">
+                    {fmtDateShort(relevantPayment.paid_at)}
+                  </span>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Detail Acara */}
-          <div
-            style={{
-              borderTop: "1px solid #E5DDD0",
-              paddingTop: 28,
-              marginBottom: 28,
-            }}
-          >
-            <p
-              style={{
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.15em",
-                color: "#8A8480",
-                marginBottom: 14,
-              }}
-            >
-              Detail Acara
+          {/* ══════════════════════════════════════════════
+              RINGKASAN PEMBAYARAN KESELURUHAN
+              (Menampilkan progres DP + Pelunasan sekaligus)
+          ══════════════════════════════════════════════ */}
+          <div className="mx-8 mb-8 p-5 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+            <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-3">
+              Ringkasan Pembayaran Keseluruhan
             </p>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "6px 32px",
-              }}
-            >
-              {[
-                {
-                  l: "Tanggal Pernikahan",
-                  v: booking.wedding_date
-                    ? new Date(booking.wedding_date).toLocaleDateString(
-                        "id-ID",
-                        {
-                          weekday: "long",
-                          day: "numeric",
-                          month: "long",
-                          year: "numeric",
-                        },
-                      )
-                    : "—",
-                },
-                { l: "Lokasi", v: booking.location || "—" },
-                { l: "Konsep", v: booking.konsep || "—" },
-                { l: "Vendor", v: booking.vendor?.name || "Akan ditentukan" },
-              ].map(({ l, v }) => (
-                <div
-                  key={l}
-                  style={{
-                    paddingBottom: 8,
-                    borderBottom: "1px dashed #E5DDD0",
-                  }}
-                >
-                  <p
-                    style={{
-                      fontSize: 10,
-                      color: "#8A8480",
-                      margin: "0 0 2px",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    {l}
-                  </p>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      color: "#1C1A17",
-                      margin: 0,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {v}
-                  </p>
-                </div>
-              ))}
-            </div>
-            {booking.notes && (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: "10px 14px",
-                  background: "#FAF7F2",
-                  border: "1px solid #E5DDD0",
-                }}
-              >
+            <div className="grid grid-cols-3 gap-4 text-center">
+              {/* Total Paket */}
+              <div>
+                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
+                  Total Paket
+                </p>
+                <p className="text-sm font-semibold text-[var(--color-dark)] font-[var(--font-sans)]">
+                  {formatRupiah(totalPrice)}
+                </p>
+              </div>
+              {/* DP 30% */}
+              <div className={dpPaid ? "opacity-100" : "opacity-50"}>
+                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
+                  DP 30%
+                </p>
                 <p
-                  style={{
-                    fontSize: 10,
-                    color: "#8A8480",
-                    margin: "0 0 4px",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                  }}
+                  className={[
+                    "text-sm font-semibold font-[var(--font-sans)]",
+                    dpPaid ? "text-emerald-600" : "text-[var(--color-slate)]",
+                  ].join(" ")}
                 >
+                  {dpPaid ? "✓ " : ""}
+                  {formatRupiah(dpAmount)}
+                </p>
+              </div>
+              {/* Pelunasan 70% */}
+              <div className={fullPaid ? "opacity-100" : "opacity-50"}>
+                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
+                  Pelunasan 70%
+                </p>
+                <p
+                  className={[
+                    "text-sm font-semibold font-[var(--font-sans)]",
+                    fullPaid ? "text-emerald-600" : "text-[var(--color-slate)]",
+                  ].join(" ")}
+                >
+                  {fullPaid ? "✓ " : ""}
+                  {formatRupiah(sisaAmount)}
+                </p>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mt-4">
+              <div className="h-1.5 bg-[var(--color-cream-border)] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[var(--color-gold)] rounded-full transition-all duration-500"
+                  style={{
+                    width: fullPaid ? "100%" : dpPaid ? "30%" : "0%",
+                  }}
+                />
+              </div>
+              <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)] mt-1 text-right">
+                {fullPaid
+                  ? "Lunas 100%"
+                  : dpPaid
+                    ? "30% Terbayar"
+                    : "Belum ada pembayaran"}
+              </p>
+            </div>
+          </div>
+
+          {/* ══════════════════════════════════════════════
+              FOOTER INVOICE (SAMA untuk DP dan Pelunasan)
+          ══════════════════════════════════════════════ */}
+          <div className="px-8 py-6 border-t border-[var(--color-cream-border)] bg-[var(--color-dark)]">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-2">
                   Catatan
                 </p>
-                <p
-                  style={{
-                    fontSize: 12,
-                    color: "#6B6660",
-                    margin: 0,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {booking.notes}
+                <p className="text-xs text-white/60 font-[var(--font-sans)] leading-relaxed">
+                  {isDP
+                    ? `Invoice ini adalah bukti pembayaran DP 30% senilai ${formatRupiah(dpAmount)}. Sisa pembayaran (pelunasan 70%) sebesar ${formatRupiah(sisaAmount)} akan ditagihkan sebelum hari H.`
+                    : `Invoice ini adalah bukti pelunasan 70% senilai ${formatRupiah(sisaAmount)}. Total pembayaran Anda ${formatRupiah(totalPrice)} telah lunas.`}
                 </p>
               </div>
-            )}
-          </div>
-
-          {/* Footer invoice */}
-          <div
-            style={{
-              borderTop: "1px solid #E5DDD0",
-              paddingTop: 24,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-end",
-            }}
-          >
-            <div>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "#8A8480",
-                  margin: "0 0 4px",
-                  lineHeight: 1.6,
-                }}
-              >
-                Terima kasih telah mempercayakan hari istimewa Anda kepada
-                AMARANTA.
-              </p>
-              <p style={{ fontSize: 11, color: "#8A8480", margin: 0 }}>
-                Pertanyaan? Hubungi kami di {AMARANTA_INFO.email}
-              </p>
+              <div className="sm:text-right">
+                <p className="text-[10px] uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-2">
+                  Pertanyaan?
+                </p>
+                <p className="text-xs text-white/60 font-[var(--font-sans)]">
+                  halo@amaranta.id
+                </p>
+                <p className="text-xs text-white/60 font-[var(--font-sans)]">
+                  +62 811-0000-1234
+                </p>
+                <p className="text-[10px] text-white/30 font-[var(--font-sans)] mt-3">
+                  Terima kasih telah mempercayai AMARANTA
+                </p>
+              </div>
             </div>
-            {/* Cap lunas */}
-            {booking.full_paid_at && (
-              <div
-                style={{
-                  border: "2px solid #10b981",
-                  padding: "6px 16px",
-                  transform: "rotate(-8deg)",
-                  opacity: 0.8,
-                }}
-              >
-                <p
-                  style={{
-                    fontSize: 13,
-                    color: "#10b981",
-                    fontWeight: 700,
-                    margin: 0,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.15em",
-                  }}
-                >
-                  LUNAS
-                </p>
-              </div>
-            )}
           </div>
+        </div>
 
-          {/* Watermark nomor */}
-          <p
-            style={{
-              textAlign: "center",
-              fontSize: 10,
-              color: "#E5DDD0",
-              marginTop: 24,
-              letterSpacing: "0.2em",
-              fontFamily: "Playfair Display, Georgia, serif",
-            }}
+        {/* ── Aksi bawah (disembunyikan saat print) ── */}
+        <div className="print:hidden mt-6 flex flex-wrap gap-3 justify-center">
+          <Link
+            to="/pelanggan/pemesanan"
+            className="px-6 py-2.5 border border-[var(--color-cream-border)] text-sm text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-colors"
           >
-            {booking.order_id} · AMARANTA Wedding Organizer
-          </p>
+            ← Kembali ke Pemesanan
+          </Link>
+
+          {/* Tombol bayar pelunasan (hanya jika DP sudah bayar & belum lunas & di halaman pelunasan) */}
+          {!isDP && dpPaid && !fullPaid && booking.admin_status === "preparation" && (
+            <button
+              onClick={handlePayPelunasan}
+              disabled={payLoading}
+              className="px-6 py-2.5 bg-[var(--color-dark)] text-[var(--color-cream)] text-sm font-[var(--font-sans)] hover:bg-[var(--color-charcoal)] transition-colors disabled:opacity-50"
+            >
+              {payLoading
+                ? "Memproses..."
+                : `Bayar Pelunasan ${formatRupiah(sisaAmount)}`}
+            </button>
+          )}
+
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-6 py-2.5 border border-[var(--color-cream-border)] text-sm text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-colors"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
+              />
+            </svg>
+            Cetak / PDF
+          </button>
         </div>
       </div>
 
-      {/* Style inject untuk animasi spinner */}
+      {/* ── Print styles ── */}
       <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
+        @media print {
+          body { background: white !important; }
+          @page { margin: 1cm; }
+        }
       `}</style>
+    </div>
+  );
+}
+
+// ── Loading screen ────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-[var(--color-cream)] flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-8 h-8 border-2 border-[var(--color-gold)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
+          Memuat invoice...
+        </p>
+      </div>
     </div>
   );
 }

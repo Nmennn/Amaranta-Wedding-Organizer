@@ -3,11 +3,11 @@ import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
 import Input from '../../components/ui/Input'
-import { adminService, vendorService } from '../../services'
+import { adminService, vendorService, bookingService } from '../../services'
 import { formatRupiah } from '../../data/packages'
 
 const STATUS_STYLE = {
-  waiting_payment:             'bg-gray-100 text-gray-500',
+  waiting_dp:             'bg-gray-100 text-gray-500',
   payment_failed:         'bg-red-100 text-red-600',
   waiting_vendor:         'bg-amber-100 text-amber-700',
   vendor_assigned:        'bg-blue-100 text-blue-700',
@@ -19,7 +19,7 @@ const STATUS_STYLE = {
   completed:              'bg-emerald-100 text-emerald-700',
 }
 const STATUS_LABEL = {
-  waiting_payment:             'Menunggu Bayar',
+  waiting_dp:             'Menunggu Bayar',
   payment_failed:         'Bayar Gagal',
   waiting_vendor:         'Pilih Vendor',
   vendor_assigned:        'Menunggu Vendor',
@@ -95,8 +95,15 @@ function WorkflowPanel({ booking, vendors, onUpdated }) {
   }
 
   const STEPS = ['Bayar', 'Pilih Vendor', 'Tech Meeting', 'Persiapan', 'Eksekusi']
-  const STEP_STATUS = ['waiting_vendor', 'vendor_assigned', 'vendor_confirmed', 'tech_meeting_scheduled', 'preparation', 'in_event']
-  const curIdx = STEP_STATUS.indexOf(s)
+  function getStepIndex(status) {
+    if (status === 'waiting_dp' || status === 'payment_failed') return 0;
+    if (status === 'waiting_vendor' || status === 'vendor_assigned' || status === 'vendor_rejected') return 1;
+    if (status === 'vendor_confirmed' || status === 'tech_meeting_scheduled') return 2;
+    if (status === 'preparation') return 3;
+    if (status === 'in_event') return 4;
+    return 5;
+  }
+  const curIdx = getStepIndex(s)
 
   return (
     <div className="mt-5 border-t border-[var(--color-cream-border)] pt-5 space-y-4">
@@ -120,6 +127,32 @@ function WorkflowPanel({ booking, vendors, onUpdated }) {
           </div>
         ))}
       </div>
+
+      {/* Konfirmasi Pembayaran DP */}
+      {(s === 'waiting_dp' || s === 'payment_failed') && (
+        <div className="space-y-3 p-4 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
+          <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+            💳 Konfirmasi Pembayaran Klien
+          </p>
+          <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
+            Klien belum membayar DP 30% atau pembayaran gagal. Anda dapat mengonfirmasi pembayaran DP secara manual jika klien telah mentransfer secara manual.
+          </p>
+          <Button size="sm" variant="gold" isLoading={acting} onClick={async () => {
+            if (!window.confirm('Konfirmasi pembayaran DP secara manual?')) return;
+            setActing(true);
+            try {
+              await adminService.confirmPayment(booking.id, { payment_type: 'dp30' });
+              onUpdated();
+            } catch (err) {
+              alert(err.userMessage || 'Gagal mengonfirmasi pembayaran');
+            } finally {
+              setActing(false);
+            }
+          }}>
+            Konfirmasi Pembayaran DP 30%
+          </Button>
+        </div>
+      )}
 
       {/* Assign vendor */}
       {(s === 'waiting_vendor' || s === 'vendor_rejected') && (
@@ -216,25 +249,41 @@ function WorkflowPanel({ booking, vendors, onUpdated }) {
         ))}
       </div>
 
+      {/* Detail Jadwal Tech Meeting jika ada */}
+      {booking.tech_meeting_at && (
+        <div className="p-2 bg-purple-50 border border-purple-100 text-[11px] rounded text-purple-900 font-[var(--font-sans)] leading-relaxed">
+          <strong>📅 Jadwal Tech Meeting:</strong> {new Date(booking.tech_meeting_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}<br/>
+          <strong>Lokasi:</strong> {booking.tech_meeting_location}
+          {booking.tech_meeting_notes && <><br/><strong>Catatan:</strong> {booking.tech_meeting_notes}</>}
+        </div>
+      )}
+
       {/* Riwayat vendor request */}
       {booking.vendor_requests?.length > 0 && (
         <div>
           <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-2">Riwayat Vendor</p>
           {booking.vendor_requests.map((vr, i) => (
-            <div key={i} className="flex items-center gap-3 py-1.5 border-b border-[var(--color-cream-border)] last:border-0">
-              <span className={['text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]',
-                vr.status === 'confirmed' ? 'bg-green-100 text-green-700'
-                : vr.status === 'rejected' ? 'bg-red-100 text-red-600'
-                : 'bg-amber-100 text-amber-700'].join(' ')}>
-                {vr.status}
-              </span>
-              <span className="text-xs text-[var(--color-dark)] font-[var(--font-sans)]">
-                {vr.vendor?.name || '—'}
-              </span>
-              {vr.rejection_reason && (
-                <span className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] truncate">
-                  — {vr.rejection_reason}
+            <div key={i} className="py-1.5 border-b border-[var(--color-cream-border)] last:border-0 font-[var(--font-sans)]">
+              <div className="flex items-center gap-3">
+                <span className={['text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]',
+                  vr.status === 'confirmed' ? 'bg-green-100 text-green-700'
+                  : vr.status === 'rejected' ? 'bg-red-100 text-red-600'
+                  : 'bg-amber-100 text-amber-700'].join(' ')}>
+                  {vr.status}
                 </span>
+                <span className="text-xs text-[var(--color-dark)] font-medium">
+                  {vr.vendor?.name || '—'}
+                </span>
+                {vr.rejection_reason && (
+                  <span className="text-xs text-[var(--color-slate)] truncate">
+                    — {vr.rejection_reason}
+                  </span>
+                )}
+              </div>
+              {vr.status === 'confirmed' && vr.vendor_notes && (
+                <div className="mt-1 p-2 bg-teal-50 border border-teal-100 rounded text-teal-800 text-[11px] leading-relaxed">
+                  <strong>💬 Detail Pertemuan / Koordinasi:</strong> {vr.vendor_notes}
+                </div>
               )}
             </div>
           ))}
@@ -276,6 +325,28 @@ export default function AdminBookings() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function handleDeleteBooking(b) {
+    if (!window.confirm(`Yakin ingin menghapus booking ${b.order_id} secara permanen? Tindakan ini akan menghapus pembayaran dan request vendor terkait.`)) return;
+    try {
+      await bookingService.delete(b.id);
+      alert('Booking berhasil dihapus');
+      load();
+    } catch (err) {
+      alert(err.userMessage || 'Gagal menghapus booking');
+    }
+  }
+
+  async function handleDeleteAllBookings() {
+    if (!window.confirm('APAKAH ANDA YAKIN? Tindakan ini akan menghapus SEMUA data booking dan pembayaran di sistem secara permanen!')) return;
+    try {
+      await bookingService.deleteAll();
+      alert('Semua data booking berhasil dikosongkan');
+      load();
+    } catch (err) {
+      alert(err.userMessage || 'Gagal mengosongkan data booking');
+    }
+  }
 
   // Refresh detail jika sedang dibuka
 
@@ -321,27 +392,35 @@ export default function AdminBookings() {
       )}
 
       {/* Filter + Search */}
-      <div className="flex flex-wrap gap-3 mb-6">
+      <div className="flex flex-wrap gap-3 mb-6 items-center">
         <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
           placeholder="Cari order ID, nama, lokasi..."
           className="flex-1 min-w-[200px] px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors" />
-        {[
-          { val: 'all',             label: 'Semua' },
-          { val: 'waiting_payment', label: 'Menunggu Bayar' },
-          { val: 'waiting_vendor',  label: 'Pilih Vendor' },
-          { val: 'vendor_assigned', label: 'Menunggu Vendor' },
-          { val: 'vendor_confirmed',label: 'Vendor Konfirm' },
-          { val: 'preparation',     label: 'Persiapan' },
-          { val: 'in_event',        label: 'Hari H' },
-        ].map(f => (
-          <button key={f.val} onClick={() => { setFilter(f.val); setPage(1) }}
-            className={['px-3 py-2 text-xs uppercase tracking-widest font-[var(--font-sans)] border transition-all',
-              filter === f.val
-                ? 'bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]'
-                : 'bg-white border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]'].join(' ')}>
-            {f.label}
-          </button>
-        ))}
+        <div className="flex flex-wrap gap-2 items-center w-full md:w-auto">
+          {[
+            { val: 'all',             label: 'Semua' },
+            { val: 'waiting_dp',      label: 'Menunggu Bayar' },
+            { val: 'waiting_vendor',  label: 'Pilih Vendor' },
+            { val: 'vendor_assigned', label: 'Menunggu Vendor' },
+            { val: 'vendor_confirmed',label: 'Vendor Konfirm' },
+            { val: 'preparation',     label: 'Persiapan' },
+            { val: 'in_event',        label: 'Hari H' },
+          ].map(f => (
+            <button key={f.val} onClick={() => { setFilter(f.val); setPage(1) }}
+              className={['px-3 py-2 text-xs uppercase tracking-widest font-[var(--font-sans)] border transition-all',
+                filter === f.val
+                  ? 'bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]'
+                  : 'bg-white border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]'].join(' ')}>
+              {f.label}
+            </button>
+          ))}
+          {bookings.length > 0 && (
+            <button onClick={handleDeleteAllBookings}
+              className="px-3 py-2 text-xs uppercase tracking-widest font-[var(--font-sans)] border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-500 transition-all md:ml-auto">
+              🗑️ Kosongkan Booking
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabel */}
@@ -408,10 +487,19 @@ export default function AdminBookings() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <button onClick={() => setDetail(b)}
-                          className="text-xs px-3 py-1.5 border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-all whitespace-nowrap">
-                          Kelola
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setDetail(b)}
+                            className="text-xs px-3 py-1.5 border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-all whitespace-nowrap">
+                            Kelola
+                          </button>
+                          <button onClick={() => handleDeleteBooking(b)}
+                            className="p-1.5 border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-500 rounded transition-all whitespace-nowrap"
+                            title="Hapus Booking">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

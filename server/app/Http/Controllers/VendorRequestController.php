@@ -26,7 +26,7 @@ class VendorRequestController extends Controller
         $vendor = $request->user()->vendor;
 
         // Pastikan request ini memang untuk vendor yang login
-        if (!$vendor || $vendorRequest->vendor_id !== $vendor->id) {
+        if (!$vendor || (int) $vendorRequest->vendor_id !== (int) $vendor->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -67,7 +67,7 @@ class VendorRequestController extends Controller
     {
         $vendor = $request->user()->vendor;
 
-        if (!$vendor || $vendorRequest->vendor_id !== $vendor->id) {
+        if (!$vendor || (int) $vendorRequest->vendor_id !== (int) $vendor->id) {
             return response()->json(['message' => 'Tidak diizinkan.'], 403);
         }
 
@@ -93,5 +93,38 @@ class VendorRequestController extends Controller
         return response()->json([
             'message' => 'Anda menolak booking ini. Admin akan memilih vendor lain.',
         ]);
+    }
+
+    // DELETE /api/vendor-requests/{vendorRequest}
+    public function destroy(Request $request, VendorRequest $vendorRequest): JsonResponse
+    {
+        $vendor = $request->user()->vendor;
+        if (!$vendor || (int) $vendorRequest->vendor_id !== (int) $vendor->id) {
+            return response()->json(['message' => 'Tidak diizinkan.'], 403);
+        }
+
+        // Hanya boleh hapus yang sudah direspons (bukan pending)
+        if ($vendorRequest->status === 'pending') {
+            return response()->json(['message' => 'Request pending tidak dapat dihapus dari riwayat.'], 422);
+        }
+
+        $vendorRequest->delete();
+        return response()->json(['message' => 'Request berhasil dihapus dari riwayat.']);
+    }
+
+    // DELETE /api/vendor-requests
+    public function destroyAll(Request $request): JsonResponse
+    {
+        $vendor = $request->user()->vendor;
+        if (!$vendor) {
+            return response()->json(['message' => 'Vendor tidak ditemukan.'], 404);
+        }
+
+        // Hapus semua request vendor yang sudah dikonfirmasi atau ditolak
+        VendorRequest::where('vendor_id', $vendor->id)
+            ->whereIn('status', ['confirmed', 'rejected'])
+            ->delete();
+
+        return response()->json(['message' => 'Semua riwayat request berhasil dibersihkan.']);
     }
 }

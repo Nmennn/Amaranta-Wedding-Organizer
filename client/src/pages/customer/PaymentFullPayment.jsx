@@ -46,7 +46,8 @@ export default function PaymentFullPayment() {
   // Fetch booking data
   useEffect(() => {
     if (!bookingId) return;
-    api.get(`/bookings/${bookingId}`)
+    api
+      .get(`/bookings/${bookingId}`)
       .then((res) => setBooking(res.data.data))
       .catch((e) => {
         setApiError(e.userMessage || "Gagal memuat data pemesanan.");
@@ -55,7 +56,7 @@ export default function PaymentFullPayment() {
 
   // Jika booking sudah full paid, redirect
   useEffect(() => {
-    if (booking && booking.phase === "full_paid") {
+    if (booking && (booking.phase === "pelunasan" || booking.phase === "paid")) {
       navigate("/pelanggan/pemesanan", { replace: true });
     }
   }, [booking, navigate]);
@@ -105,7 +106,10 @@ export default function PaymentFullPayment() {
       }
     } catch (e) {
       console.error(e);
-      const msg = e.response?.data?.message || e.userMessage || "Tidak bisa terhubung ke server.";
+      const msg =
+        e.response?.data?.message ||
+        e.userMessage ||
+        "Tidak bisa terhubung ke server.";
       setApiError(msg);
       setLoading(false);
     }
@@ -178,7 +182,9 @@ export default function PaymentFullPayment() {
                   </span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-[var(--color-slate)]">DP 30% (sudah bayar)</span>
+                  <span className="text-[var(--color-slate)]">
+                    DP 30% (sudah bayar)
+                  </span>
                   <span className="text-[var(--color-dark)] font-medium line-through">
                     {formatRupiah(Math.round(booking.total_price * 0.3))}
                   </span>
@@ -298,7 +304,8 @@ export default function PaymentFullPayment() {
               Pelunasan Selesai!
             </h1>
             <p className="text-sm text-[var(--color-dark-muted)] font-[var(--font-sans)] mb-8 leading-relaxed max-w-sm mx-auto">
-              Pembayaran Anda telah dikonfirmasi.<br />
+              Pembayaran Anda telah dikonfirmasi.
+              <br />
               Kami akan segera memproses order Anda.
             </p>
 
@@ -336,10 +343,7 @@ export default function PaymentFullPayment() {
               </button>
               <button
                 onClick={() =>
-                  window.open(
-                    `/pelanggan/invoice/${bookingId}`,
-                    "_blank"
-                  )
+                  window.open(`/pelanggan/invoice/${bookingId}?type=pelunasan`, "_blank")
                 }
                 className="flex items-center justify-center gap-2 px-8 py-3 border border-[var(--color-gold)] text-[var(--color-gold)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:bg-[var(--color-gold-pale)] transition-all"
               >

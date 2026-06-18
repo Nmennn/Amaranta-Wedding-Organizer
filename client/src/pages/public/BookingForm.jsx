@@ -1,477 +1,646 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
-import Navbar from '../../components/Navbar'
-import Button from '../../components/ui/Button'
-import Input from '../../components/ui/Input'
-import useAuthStore from '../../store/authStore'
-import { bookingService } from '../../services'
-import { toastSuccess, toastError } from '../../hooks/useToast'
-import { PACKAGES, formatRupiah } from '../../data/packages'
+// ============================================================
+// src/pages/public/BookingForm.jsx
+// FIX:
+//   1. MAX tamu disesuaikan dengan placeholder per paket
+//      Silver: max 100, Gold: max 200, Platinum: max 500
+//   2. Validasi jumlah_tamu dengan batas atas & bawah per tier
+//   3. Placeholder jumlah tamu menampilkan range yang sesuai
+// ============================================================
 
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { bookingService, packageService } from "../../services";
+import { PACKAGES, formatRupiah } from "../../data/packages";
+import Navbar from "../../components/Navbar";
+import { toastSuccess, toastError } from "../../hooks/useToast";
+
+// ── Konfigurasi max tamu per tier (sesuai data/packages.js) ──
+// Silver:   50–100  tamu
+// Gold:     100–200 tamu
+// Platinum: 200–500 tamu
+const TAMU_CONFIG = {
+  silver: {
+    min: 50,
+    max: 100,
+    label: "50–100 tamu",
+    placeholder: "Contoh: 80",
+  },
+  gold: {
+    min: 100,
+    max: 200,
+    label: "100–200 tamu",
+    placeholder: "Contoh: 150",
+  },
+  platinum: {
+    min: 200,
+    max: 500,
+    label: "200–500 tamu",
+    placeholder: "Contoh: 300",
+  },
+};
+
+// ── Helper format ─────────────────────────────────────────────
+function fmtDate(dateStr) {
+  if (!dateStr) return "-";
+  return new Date(dateStr).toLocaleDateString("id-ID", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+// ── Komponen utama ────────────────────────────────────────────
 export default function BookingForm() {
-  const { tierId } = useParams()
-  const navigate = useNavigate()
-  const user = useAuthStore(s => s.user)
-  const token = useAuthStore(s => s.token)
+  const { tierId } = useParams(); // 'silver' | 'gold' | 'platinum'
+  const navigate = useNavigate();
 
-  // Jika tidak login, redirect ke login
+  // ── State form ────────────────────────────────────────────
+  const [form, setForm] = useState({
+    pemesan_name: "",
+    pemesan_email: "",
+    pemesan_phone: "",
+    wedding_date: "",
+    location: "",
+    konsep: "",
+    notes: "",
+    jumlah_tamu: "", // BARU: jumlah tamu (disimpan ke notes atau field khusus)
+  });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [bookedDates, setBookedDates] = useState([]);
+
+  // ── Cari data paket dari local data ──────────────────────
+  // BUG FIX: tierId dari URL bisa 'silver','gold','platinum' — pastikan lowercase
+  const tierKey = tierId?.toLowerCase();
+  const pkg = PACKAGES.find((p) => p.id === tierKey);
+  const tamuCfg = TAMU_CONFIG[tierKey] || TAMU_CONFIG.silver;
+
+  // ── Redirect jika tier tidak valid ───────────────────────
   useEffect(() => {
-    if (!token) {
-      navigate('/masuk')
+    if (!pkg) {
+      toastError("Paket tidak ditemukan.");
+      navigate("/paket");
     }
-  }, [token, navigate])
+  }, [pkg, navigate]);
 
-  // State form
-  const [loading, setLoading] = useState(false)
-  const [weddingDate, setWeddingDate] = useState('')
-  const [location, setLocation] = useState('')
-  const [concept, setConcept] = useState('')
-  const [guestCount, setGuestCount] = useState('')
-  const [notes, setNotes] = useState('')
-  const [accepted, setAccepted] = useState(false)
+  // ── Ambil tanggal yang sudah dibooking ───────────────────
+  // Untuk disable tanggal yang tidak tersedia di date picker
+  useEffect(() => {
+    bookingService
+      .getBookedDates?.()
+      .then((dates) => setBookedDates(dates || []))
+      .catch(() => {}); // silent fail — tidak blokir user
+  }, []);
 
-  // Cari paket berdasarkan tierId
-  const pkg = PACKAGES.find(p => p.id === tierId?.toLowerCase())
-
-  if (!pkg) {
-    return (
-      <>
-        <Navbar />
-        <div className="min-h-screen bg-[var(--color-cream)] flex flex-col items-center justify-center px-4">
-          <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)] mb-4">
-            Paket tidak ditemukan
-          </p>
-          <Link to="/paket"
-            className="px-6 py-2 bg-[var(--color-gold)] text-[var(--color-dark)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:bg-[var(--color-gold-light)] transition-colors">
-            Kembali ke Paket
-          </Link>
-        </div>
-      </>
-    )
+  // ── Handler input generic ─────────────────────────────────
+  function handleChange(e) {
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
+    // Hapus error field ini saat user mulai mengetik
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: "" }));
+    }
   }
 
+  // ── Validasi form ─────────────────────────────────────────
+  function validate() {
+    const errs = {};
+
+    if (!form.pemesan_name.trim())
+      errs.pemesan_name = "Nama pemesan wajib diisi.";
+
+    if (!form.pemesan_email.trim()) errs.pemesan_email = "Email wajib diisi.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.pemesan_email))
+      errs.pemesan_email = "Format email tidak valid.";
+
+    if (!form.pemesan_phone.trim())
+      errs.pemesan_phone = "Nomor HP wajib diisi.";
+    else if (!/^08\d{8,11}$/.test(form.pemesan_phone))
+      errs.pemesan_phone = "Format HP tidak valid (contoh: 081234567890).";
+
+    if (!form.wedding_date)
+      errs.wedding_date = "Tanggal pernikahan wajib dipilih.";
+    else if (new Date(form.wedding_date) <= new Date())
+      errs.wedding_date = "Tanggal pernikahan harus di masa depan.";
+    else if (bookedDates.includes(form.wedding_date))
+      errs.wedding_date = "Tanggal ini sudah dipesan. Silakan pilih tanggal lain.";
+
+    if (!form.location.trim()) errs.location = "Lokasi pernikahan wajib diisi.";
+
+    if (!form.konsep.trim()) errs.konsep = "Konsep pernikahan wajib diisi.";
+
+    // ── VALIDASI JUMLAH TAMU (sesuai range per paket) ──────
+    if (!form.jumlah_tamu) {
+      errs.jumlah_tamu = "Jumlah tamu wajib diisi.";
+    } else {
+      const jumlah = parseInt(form.jumlah_tamu, 10);
+      if (isNaN(jumlah) || jumlah < 1)
+        errs.jumlah_tamu = "Jumlah tamu harus berupa angka positif.";
+      else if (jumlah < tamuCfg.min)
+        errs.jumlah_tamu = `Jumlah tamu minimal ${tamuCfg.min} orang untuk paket ${pkg?.tier}.`;
+      else if (jumlah > tamuCfg.max)
+        errs.jumlah_tamu = `Jumlah tamu maksimal ${tamuCfg.max} orang untuk paket ${pkg?.tier}.`;
+    }
+
+    return errs;
+  }
+
+  // ── Submit ────────────────────────────────────────────────
   async function handleSubmit(e) {
-    e.preventDefault()
-
-    if (!weddingDate || !location || !concept) {
-      toastError('Tanggal nikah, lokasi, dan konsep wajib diisi')
-      return
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      // Scroll ke field pertama yang error
+      const firstErrKey = Object.keys(errs)[0];
+      document
+        .getElementById(firstErrKey)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
 
-    if (!accepted) {
-      toastError('Setujui syarat & ketentuan untuk melanjutkan')
-      return
-    }
-
-    setLoading(true)
+    setLoading(true);
     try {
-      const bookingData = {
-        tier_id: pkg.id,
-        pemesan_name: user.name,
-        pemesan_email: user.email,
-        pemesan_phone: user.phone,
-        wedding_date: weddingDate,
-        location,
-        konsep: concept,
-        guest_count: guestCount ? Number(guestCount) : null,
-        notes,
-      }
+      // BUG FIX: gabungkan jumlah_tamu ke dalam notes karena
+      // backend tidak punya kolom jumlah_tamu di tabel bookings.
+      // Jika backend nanti ditambah kolom jumlah_tamu, cukup kirim langsung.
+      const notesWithTamu = `Jumlah Tamu: ${form.jumlah_tamu} orang${
+        form.notes ? `\n${form.notes}` : ""
+      }`;
 
-      const result = await bookingService.create(bookingData)
-      const bookingId = result.id
+      const payload = {
+        tier_id: tierKey,
+        pemesan_name: form.pemesan_name,
+        pemesan_email: form.pemesan_email,
+        pemesan_phone: form.pemesan_phone,
+        wedding_date: form.wedding_date,
+        location: form.location,
+        konsep: form.konsep,
+        notes: notesWithTamu,
+      };
 
-      toastSuccess('Booking berhasil dibuat! Lanjut ke pembayaran...')
-
-      // Redirect ke halaman pembayaran
-      setTimeout(() => {
-        navigate(`/pelanggan/invoice/${bookingId}`)
-      }, 1000)
+      const booking = await bookingService.create(payload);
+      toastSuccess("Booking berhasil dibuat! Silakan lanjutkan pembayaran DP.");
+      // Redirect ke halaman pemesanan saya
+      navigate("/pelanggan/pemesanan");
     } catch (err) {
-      toastError(err.userMessage || 'Gagal membuat booking')
+      const msg = err.userMessage || err.message || "Booking gagal. Coba lagi.";
+      toastError(msg);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
+
+  if (!pkg) return null;
+
+  const dp = Math.round(pkg.price * 0.3);
+
+  // ── Tanggal minimum: besok ────────────────────────────────
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const minDate = tomorrow.toISOString().split("T")[0];
 
   return (
-    <>
+    <div className="min-h-screen bg-[var(--color-cream)]">
       <Navbar />
-      <div className="min-h-screen bg-[var(--color-cream)] py-12 px-4">
-        <div className="max-w-2xl mx-auto">
-          {/* Header */}
-          <div className="mb-8">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-2">
-              Formulir Pemesanan
-            </p>
-            <h1 className="font-[var(--font-display)] text-4xl text-[var(--color-dark)] mb-2">
-              Paket {pkg.tier}
-            </h1>
-            <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
-              Isi detail pernikahan Anda untuk melanjutkan pemesanan
-            </p>
-          </div>
 
-          {/* Card paket dipilih */}
-          <div className="mb-8 bg-white border border-[var(--color-cream-border)] p-6">
-            <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
-              <div>
-                <h2 className="font-[var(--font-display)] text-2xl text-[var(--color-dark)] mb-2">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 pt-24">
+        {/* ── Breadcrumb ── */}
+        <div className="flex items-center gap-2 text-xs text-[var(--color-slate)] font-[var(--font-sans)] mb-8 uppercase tracking-widest">
+          <Link
+            to="/"
+            className="hover:text-[var(--color-gold)] transition-colors"
+          >
+            Beranda
+          </Link>
+          <span>/</span>
+          <Link
+            to="/paket"
+            className="hover:text-[var(--color-gold)] transition-colors"
+          >
+            Paket
+          </Link>
+          <span>/</span>
+          <span className="text-[var(--color-dark)]">
+            Pesan Paket {pkg.tier}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* ── Form utama ── */}
+          <div className="lg:col-span-2">
+            <div className="bg-white border border-[var(--color-cream-border)] p-6 sm:p-8">
+              {/* Header */}
+              <div className="mb-8">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-1">
+                  Formulir Pemesanan
+                </p>
+                <h1 className="font-[var(--font-display)] text-3xl text-[var(--color-dark)]">
                   Paket {pkg.tier}
-                </h2>
-                <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)] mb-3">
+                </h1>
+                <p className="text-sm text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
                   {pkg.tagline}
                 </p>
-                <ul className="space-y-1 text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]">
-                  {pkg.includes?.slice(0, 3).map((item, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <span className="text-[var(--color-gold)] flex-shrink-0">✓</span>
-                      <span>{item.label}</span>
-                    </li>
-                  ))}
-                </ul>
               </div>
-              <div className="flex-shrink-0 text-right">
-                <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mb-1">
-                  Harga Paket
-                </p>
-                <p className="font-[var(--font-display)] text-2xl text-[var(--color-gold)]">
-                  {formatRupiah(pkg.price)}
-                </p>
-              </div>
+
+              <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+                {/* ── SEKSI: Data Pemesan ── */}
+                <fieldset>
+                  <legend className="text-xs uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-4 pb-2 border-b border-[var(--color-cream-border)] w-full">
+                    Data Pemesan
+                  </legend>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <FormField
+                      id="pemesan_name"
+                      label="Nama Lengkap"
+                      required
+                      error={errors.pemesan_name}
+                    >
+                      <input
+                        id="pemesan_name"
+                        name="pemesan_name"
+                        type="text"
+                        value={form.pemesan_name}
+                        onChange={handleChange}
+                        placeholder="Nama lengkap pemesan"
+                        className={inputClass(errors.pemesan_name)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      id="pemesan_email"
+                      label="Alamat Email"
+                      required
+                      error={errors.pemesan_email}
+                    >
+                      <input
+                        id="pemesan_email"
+                        name="pemesan_email"
+                        type="email"
+                        value={form.pemesan_email}
+                        onChange={handleChange}
+                        placeholder="email@contoh.com"
+                        className={inputClass(errors.pemesan_email)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      id="pemesan_phone"
+                      label="Nomor HP"
+                      required
+                      error={errors.pemesan_phone}
+                    >
+                      <input
+                        id="pemesan_phone"
+                        name="pemesan_phone"
+                        type="tel"
+                        value={form.pemesan_phone}
+                        onChange={handleChange}
+                        placeholder="081234567890"
+                        className={inputClass(errors.pemesan_phone)}
+                      />
+                    </FormField>
+                  </div>
+                </fieldset>
+
+                {/* ── SEKSI: Detail Pernikahan ── */}
+                <fieldset>
+                  <legend className="text-xs uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-4 pb-2 border-b border-[var(--color-cream-border)] w-full">
+                    Detail Pernikahan
+                  </legend>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <FormField
+                      id="wedding_date"
+                      label="Tanggal Pernikahan"
+                      required
+                      error={errors.wedding_date}
+                    >
+                      <input
+                        id="wedding_date"
+                        name="wedding_date"
+                        type="date"
+                        value={form.wedding_date}
+                        onChange={handleChange}
+                        min={minDate}
+                        className={inputClass(errors.wedding_date)}
+                      />
+                      {form.wedding_date && (
+                        <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
+                          {fmtDate(form.wedding_date)}
+                        </p>
+                      )}
+                      {bookedDates.length > 0 && (
+                        <div className="mt-2 text-[10px] text-red-600 font-[var(--font-sans)] bg-red-50/50 p-2.5 border border-red-200">
+                          <span className="font-semibold block mb-1 uppercase tracking-wider text-[9px] text-red-700">⚠️ Tanggal Sudah Dipesan (Tidak Tersedia):</span>
+                          <div className="flex flex-wrap gap-1">
+                            {bookedDates.map(d => (
+                              <span key={d} className="px-2 py-0.5 bg-white border border-red-100 font-mono font-medium text-red-700">
+                                {new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </FormField>
+
+                    {/* ── JUMLAH TAMU (dengan MAX sesuai paket) ── */}
+                    <FormField
+                      id="jumlah_tamu"
+                      label="Jumlah Tamu"
+                      required
+                      error={errors.jumlah_tamu}
+                      hint={`Kapasitas paket ${pkg.tier}: ${tamuCfg.label}`}
+                    >
+                      <input
+                        id="jumlah_tamu"
+                        name="jumlah_tamu"
+                        type="number"
+                        value={form.jumlah_tamu}
+                        onChange={handleChange}
+                        placeholder={tamuCfg.placeholder}
+                        // BUG FIX: min & max sesuai paket yang dipilih
+                        min={tamuCfg.min}
+                        max={tamuCfg.max}
+                        step="1"
+                        className={inputClass(errors.jumlah_tamu)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      id="location"
+                      label="Lokasi Pernikahan"
+                      required
+                      error={errors.location}
+                      className="sm:col-span-2"
+                    >
+                      <input
+                        id="location"
+                        name="location"
+                        type="text"
+                        value={form.location}
+                        onChange={handleChange}
+                        placeholder="Nama gedung / venue / alamat lengkap"
+                        className={inputClass(errors.location)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      id="konsep"
+                      label="Konsep / Tema Pernikahan"
+                      required
+                      error={errors.konsep}
+                      className="sm:col-span-2"
+                    >
+                      <input
+                        id="konsep"
+                        name="konsep"
+                        type="text"
+                        value={form.konsep}
+                        onChange={handleChange}
+                        placeholder="Contoh: Garden Romantic, Modern Minimalist, Javanese Traditional"
+                        className={inputClass(errors.konsep)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      id="notes"
+                      label="Catatan Tambahan"
+                      error={errors.notes}
+                      className="sm:col-span-2"
+                    >
+                      <textarea
+                        id="notes"
+                        name="notes"
+                        value={form.notes}
+                        onChange={handleChange}
+                        rows={4}
+                        placeholder="Permintaan khusus, alergi makanan, kebutuhan aksesibilitas, dll."
+                        className={`${inputClass(errors.notes)} resize-none`}
+                      />
+                    </FormField>
+                  </div>
+                </fieldset>
+
+                {/* ── SUBMIT ── */}
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className={[
+                      "w-full py-4 text-sm uppercase tracking-widest font-medium font-[var(--font-sans)] transition-all",
+                      loading
+                        ? "bg-[var(--color-dark)]/50 text-white cursor-not-allowed"
+                        : "bg-[var(--color-dark)] text-[var(--color-cream)] hover:bg-[var(--color-charcoal)]",
+                    ].join(" ")}
+                  >
+                    {loading ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg
+                          className="animate-spin h-4 w-4"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        Memproses...
+                      </span>
+                    ) : (
+                      "Konfirmasi & Pesan Sekarang"
+                    )}
+                  </button>
+                  <p className="text-xs text-center text-[var(--color-slate)] font-[var(--font-sans)] mt-3">
+                    Dengan memesan, Anda menyetujui{" "}
+                    <span className="text-[var(--color-gold)]">
+                      syarat & ketentuan
+                    </span>{" "}
+                    AMARANTA.
+                  </p>
+                </div>
+              </form>
             </div>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="bg-white border border-[var(--color-cream-border)] p-6 space-y-5">
-            {/* Tanggal Nikah */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-                Tanggal Nikah <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={weddingDate}
-                onChange={e => setWeddingDate(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors"
-              />
-              <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-                Pilih tanggal pernikahan Anda
+          {/* ── Sidebar ringkasan paket ── */}
+          <div className="space-y-4">
+            {/* Ringkasan Paket */}
+            <div className="bg-white border border-[var(--color-cream-border)] p-6 sticky top-24">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-gold)] font-[var(--font-sans)] mb-3">
+                Ringkasan Pesanan
               </p>
-            </div>
 
-            {/* Lokasi */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-                Lokasi Acara <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                placeholder="Nama lokasi, alamat, atau nama taman"
-                required
-                className="w-full px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors"
-              />
-              <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-                Contoh: Ballroom Grand Hotel, Taman Impian Bogor
-              </p>
-            </div>
-
-            {/* Konsep */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-                Konsep / Tema <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={concept}
-                onChange={e => setConcept(e.target.value)}
-                placeholder="Konsep pernikahan yang Anda inginkan"
-                required
-                className="w-full px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors"
-              />
-              <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-                Contoh: Rustic Garden, Modern Minimalis, Klasik Elegan
-              </p>
-            </div>
-
-            {/* Jumlah Tamu (Opsional) */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-                Perkiraan Jumlah Tamu (Opsional)
-              </label>
-              <input
-                type="number"
-                value={guestCount}
-                onChange={e => setGuestCount(e.target.value)}
-                placeholder="Contoh: 200"
-                min="0"
-                className="w-full px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors"
-              />
-              <p className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)] mt-1">
-                Membantu kami mempersiapkan detail yang lebih baik
-              </p>
-            </div>
-
-            {/* Catatan (Opsional) */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-                Catatan / Permintaan Khusus (Opsional)
-              </label>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                placeholder="Contoh: Ingin dekorasi warna merah dan putih, ada vegetarian guests, dll"
-                rows="4"
-                className="w-full px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors resize-none"
-              />
-            </div>
-
-            {/* Persetujuan */}
-            <div className="pt-2 border-t border-[var(--color-cream-border)]">
-              <label className="flex items-start gap-3 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={accepted}
-                  onChange={e => setAccepted(e.target.checked)}
-                  className="mt-1 w-4 h-4 border border-[var(--color-cream-border)] rounded accent-[var(--color-gold)] cursor-pointer flex-shrink-0"
+              {/* Badge tier */}
+              <div className="flex items-center gap-3 mb-4">
+                <div
+                  className="w-8 h-8 rounded-full flex-shrink-0"
+                  style={{ background: pkg.color }}
                 />
-                <span className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] group-hover:text-[var(--color-dark)]">
-                  Saya setuju dengan{' '}
-                  <Link to="#" className="text-[var(--color-gold)] hover:underline">
-                    syarat & ketentuan
-                  </Link>
-                  {' '}dan{' '}
-                  <Link to="#" className="text-[var(--color-gold)] hover:underline">
-                    kebijakan privasi
-                  </Link>
-                  {' '}AMARANTA Wedding Organizer
-                </span>
-              </label>
+                <div>
+                  <h3 className="font-[var(--font-display)] text-xl text-[var(--color-dark)]">
+                    Paket {pkg.tier}
+                  </h3>
+                  <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
+                    {pkg.duration} · {tamuCfg.label}
+                  </p>
+                </div>
+              </div>
+
+              {/* Layanan termasuk */}
+              <ul className="space-y-2 mb-5 border-t border-[var(--color-cream-border)] pt-4">
+                {pkg.includes.slice(0, 5).map((item) => (
+                  <li
+                    key={item.label}
+                    className="flex items-start gap-2 text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
+                      style={{ color: pkg.color }}
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    {item.label}
+                  </li>
+                ))}
+                {pkg.includes.length > 5 && (
+                  <li className="text-xs text-[var(--color-gold)] font-[var(--font-sans)] pl-5">
+                    +{pkg.includes.length - 5} layanan lainnya
+                  </li>
+                )}
+              </ul>
+
+              {/* Harga */}
+              <div className="border-t border-[var(--color-cream-border)] pt-4 space-y-2">
+                <div className="flex justify-between text-sm font-[var(--font-sans)]">
+                  <span className="text-[var(--color-dark-muted)]">
+                    Total Paket
+                  </span>
+                  <span className="font-medium text-[var(--color-dark)]">
+                    {formatRupiah(pkg.price)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-[var(--font-sans)]">
+                  <span className="text-[var(--color-dark-muted)]">
+                    DP 30% (sekarang)
+                  </span>
+                  <span className="font-semibold text-[var(--color-gold)]">
+                    {formatRupiah(dp)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-[var(--font-sans)]">
+                  <span className="text-[var(--color-dark-muted)]">
+                    Pelunasan 70%
+                  </span>
+                  <span className="text-[var(--color-dark-muted)]">
+                    {formatRupiah(pkg.price - dp)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Kapasitas tamu info box */}
+              <div className="mt-4 p-3 bg-[var(--color-gold-pale)] border border-[var(--color-gold)]/30">
+                <p className="text-[10px] uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-1">
+                  Kapasitas Tamu
+                </p>
+                <p className="text-sm font-medium text-[var(--color-dark)] font-[var(--font-sans)]">
+                  {tamuCfg.label}
+                </p>
+                <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)] mt-0.5">
+                  Maks. {tamuCfg.max} orang untuk paket ini
+                </p>
+              </div>
             </div>
 
-            {/* Tombol */}
-            <div className="flex gap-3 pt-2">
-              <Link to="/paket"
-                className="flex-1 text-center py-3 border border-[var(--color-cream-border)] text-xs uppercase tracking-widest text-[var(--color-dark-muted)] font-[var(--font-sans)] hover:border-[var(--color-dark)] transition-colors">
-                ← Kembali
-              </Link>
-              <button
-                type="submit"
-                disabled={loading || !accepted}
-                className="flex-1 py-3 bg-[var(--color-gold)] text-[var(--color-dark)] text-xs uppercase tracking-widest font-[var(--font-sans)] hover:bg-[var(--color-gold-light)] disabled:bg-[var(--color-cream-border)] disabled:text-[var(--color-slate)] disabled:cursor-not-allowed transition-colors">
-                {loading ? 'Memproses...' : 'Lanjut ke Pembayaran →'}
-              </button>
+            {/* Info DP */}
+            <div className="bg-[var(--color-dark)] text-[var(--color-cream)] p-5">
+              <p className="text-[10px] uppercase tracking-widest text-[var(--color-gold)] font-[var(--font-sans)] mb-2">
+                Info Pembayaran
+              </p>
+              <p className="text-xs font-[var(--font-sans)] text-white/70 leading-relaxed">
+                Setelah booking dikonfirmasi, Anda akan diarahkan untuk membayar
+                <strong className="text-[var(--color-gold)]">
+                  {" "}
+                  DP 30%
+                </strong>{" "}
+                sebesar <strong>{formatRupiah(dp)}</strong> untuk mengamankan
+                tanggal pernikahan Anda.
+              </p>
             </div>
-          </form>
-
-          {/* Info kontak */}
-          <div className="mt-8 p-5 bg-white border border-[var(--color-cream-border)]">
-            <p className="text-xs font-medium text-[var(--color-dark)] font-[var(--font-sans)] mb-2">
-              💬 Ada pertanyaan?
-            </p>
-            <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
-              Hubungi tim AMARANTA di{' '}
-              <a href="tel:081234567890" className="text-[var(--color-gold)] hover:underline">
-                081234567890
-              </a>
-              {' '}atau{' '}
-              <a href="mailto:info@amaranta.com" className="text-[var(--color-gold)] hover:underline">
-                info@amaranta.com
-              </a>
-            </p>
           </div>
         </div>
       </div>
-    </>
-
-  )
+    </div>
+  );
 }
-//       {/* Alert butuh aksi */}
-//       {needAction > 0 && (
-//         <div className="mb-5 flex items-center justify-between px-5 py-4 bg-amber-50 border border-amber-200">
-//           <div className="flex items-center gap-3">
-//             <span className="w-7 h-7 bg-amber-200 rounded-full flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
-//               {needAction}
-//             </span>
-//             <p className="text-sm font-medium text-amber-800 font-[var(--font-sans)]">
-//               {needAction} booking perlu tindakan Anda
-//             </p>
-//           </div>
-//           <button onClick={() => { setFilter('waiting_vendor'); setPage(1) }}
-//             className="text-xs text-amber-700 hover:underline font-[var(--font-sans)]">
-//             Lihat →
-//           </button>
-//         </div>
-//       )}
 
-//       {/* Filter + Search */}
-//       <div className="flex flex-wrap gap-3 mb-6">
-//         <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
-//           placeholder="Cari order ID, nama, lokasi..."
-//           className="flex-1 min-w-[200px] px-3 py-2 border border-[var(--color-cream-border)] bg-white text-sm font-[var(--font-sans)] outline-none focus:border-[var(--color-gold)] transition-colors" />
-//         {[
-//           { val: 'all', label: 'Semua' },
-//           { val: 'waiting_vendor', label: 'Pilih Vendor' },
-//           { val: 'vendor_assigned', label: 'Menunggu Vendor' },
-//           { val: 'vendor_confirmed', label: 'Vendor Konfirm' },
-//           { val: 'preparation', label: 'Persiapan' },
-//           { val: 'in_event', label: 'Hari H' },
-//         ].map(f => (
-//           <button key={f.val} onClick={() => { setFilter(f.val); setPage(1) }}
-//             className={['px-3 py-2 text-xs uppercase tracking-widest font-[var(--font-sans)] border transition-all',
-//               filter === f.val
-//                 ? 'bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]'
-//                 : 'bg-white border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]'].join(' ')}>
-//             {f.label}
-//           </button>
-//         ))}
-//       </div>
+// ── Sub-komponen helper ───────────────────────────────────────
+function FormField({
+  id,
+  label,
+  required,
+  error,
+  hint,
+  children,
+  className = "",
+}) {
+  return (
+    <div className={`flex flex-col gap-1.5 ${className}`}>
+      {label && (
+        <label
+          htmlFor={id}
+          className="text-xs font-medium text-[var(--color-dark-muted)] font-[var(--font-sans)] uppercase tracking-wide"
+        >
+          {label}
+          {required && (
+            <span className="text-red-500 ml-1" aria-hidden="true">
+              *
+            </span>
+          )}
+        </label>
+      )}
+      {children}
+      {error && (
+        <p
+          className="text-xs text-red-500 font-[var(--font-sans)]"
+          role="alert"
+        >
+          {error}
+        </p>
+      )}
+      {hint && !error && (
+        <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
 
-//       {/* Tabel */}
-//       {loading ? (
-//         <div className="text-center py-20">
-//           <div className="inline-block w-8 h-8 border-2 border-[var(--color-gold)] border-t-transparent rounded-full animate-spin" />
-//         </div>
-//       ) : (
-//         <>
-//           <div className="bg-white border border-[var(--color-cream-border)] overflow-hidden mb-4">
-//             <div className="overflow-x-auto">
-//               <table className="w-full text-sm font-[var(--font-sans)]">
-//                 <thead>
-//                   <tr className="bg-[var(--color-cream)] border-b border-[var(--color-cream-border)]">
-//                     {['Order', 'Pemesan', 'Paket', 'Tgl Acara', 'Lokasi', 'Vendor', 'Status', 'Progress', ''].map(h => (
-//                       <th key={h} className="text-left px-4 py-3 text-[10px] uppercase tracking-widest text-[var(--color-slate)] whitespace-nowrap">{h}</th>
-//                     ))}
-//                   </tr>
-//                 </thead>
-//                 <tbody>
-//                   {paginated.map(b => (
-//                     <tr key={b.id}
-//                       className="border-b border-[var(--color-cream-border)] last:border-0 hover:bg-[var(--color-cream)] transition-colors">
-//                       <td className="px-4 py-3">
-//                         <p className="text-xs font-mono text-[var(--color-gold)]">{b.order_id}</p>
-//                       </td>
-//                       <td className="px-4 py-3">
-//                         <p className="font-medium text-[var(--color-dark)]">{b.pemesan_name}</p>
-//                         <p className="text-xs text-[var(--color-slate)]">{b.pemesan_phone}</p>
-//                       </td>
-//                       <td className="px-4 py-3">
-//                         <span className={['text-xs px-2 py-0.5 rounded capitalize',
-//                           { silver: 'bg-gray-100 text-gray-600', gold: 'bg-amber-50 text-amber-700', platinum: 'bg-purple-50 text-purple-700' }[b.package?.tier_id] || 'bg-gray-100 text-gray-600'
-//                         ].join(' ')}>
-//                           {b.package?.tier_id || '—'}
-//                         </span>
-//                       </td>
-//                       <td className="px-4 py-3 text-[var(--color-dark-muted)] whitespace-nowrap">
-//                         {b.wedding_date || '—'}
-//                       </td>
-//                       <td className="px-4 py-3 text-[var(--color-slate)] max-w-[120px] truncate">
-//                         {b.location || '—'}
-//                       </td>
-//                       <td className="px-4 py-3 text-xs text-[var(--color-dark-muted)]">
-//                         {b.vendor?.name || <span className="text-[var(--color-slate)] italic">Belum</span>}
-//                       </td>
-//                       <td className="px-4 py-3">
-//                         <span className={['text-[10px] px-2 py-0.5 rounded font-[var(--font-sans)]',
-//                           STATUS_STYLE[b.admin_status] || 'bg-gray-100 text-gray-500'].join(' ')}>
-//                           {STATUS_LABEL[b.admin_status] || b.admin_status}
-//                         </span>
-//                       </td>
-//                       <td className="px-4 py-3">
-//                         {b.preparation_progress > 0 && (
-//                           <div className="flex items-center gap-2">
-//                             <div className="w-16 h-1.5 bg-[var(--color-cream-border)] rounded-full overflow-hidden">
-//                               <div className="h-full bg-[var(--color-gold)] rounded-full"
-//                                 style={{ width: b.preparation_progress + '%' }} />
-//                             </div>
-//                             <span className="text-[10px] text-[var(--color-slate)] font-[var(--font-sans)]">
-//                               {b.preparation_progress}%
-//                             </span>
-//                           </div>
-//                         )}
-//                       </td>
-//                       <td className="px-4 py-3">
-//                         <button onClick={() => setDetail(b)}
-//                           className="text-xs px-3 py-1.5 border border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-gold)] hover:text-[var(--color-gold)] font-[var(--font-sans)] transition-all whitespace-nowrap">
-//                           Kelola
-//                         </button>
-//                       </td>
-//                     </tr>
-//                   ))}
-//                 </tbody>
-//               </table>
-//             </div>
-//           </div>
-
-//           {filtered.length === 0 && (
-//             <p className="text-center py-12 text-sm text-[var(--color-slate)] font-[var(--font-sans)]">
-//               Tidak ada booking ditemukan.
-//             </p>
-//           )}
-
-//           {/* Paginasi */}
-//           {totalPages > 1 && (
-//             <div className="flex justify-center gap-2">
-//               {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-//                 <button key={p} onClick={() => setPage(p)}
-//                   className={['w-8 h-8 text-xs font-[var(--font-sans)] border transition-all',
-//                     page === p
-//                       ? 'bg-[var(--color-dark)] text-[var(--color-cream)] border-[var(--color-dark)]'
-//                       : 'border-[var(--color-cream-border)] text-[var(--color-dark-muted)] hover:border-[var(--color-dark)]'].join(' ')}>
-//                   {p}
-//                 </button>
-//               ))}
-//             </div>
-//           )}
-//         </>
-//       )}
-
-//       {/* Modal detail + workflow */}
-//       <Modal isOpen={!!detail} onClose={() => setDetail(null)}
-//         title={detail ? detail.order_id + ' — ' + detail.pemesan_name : ''}
-//         size="xl">
-//         {detail && (
-//           <div>
-//             {/* Info booking */}
-//             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-2">
-//               {[
-//                 { l: 'Paket', v: detail.package?.tier_id },
-//                 { l: 'Tgl Nikah', v: detail.wedding_date },
-//                 { l: 'Lokasi', v: detail.location },
-//                 { l: 'Konsep', v: detail.konsep },
-//                 { l: 'Total', v: formatRupiah(detail.total_price) },
-//                 { l: 'HP', v: detail.pemesan_phone },
-//               ].filter(x => x.v).map(({ l, v }) => (
-//                 <div key={l} className="border border-[var(--color-cream-border)] p-3">
-//                   <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)]">{l}</p>
-//                   <p className="text-sm font-medium text-[var(--color-dark)] font-[var(--font-sans)] capitalize">{v}</p>
-//                 </div>
-//               ))}
-//             </div>
-//             {detail.notes && (
-//               <div className="mb-2 px-3 py-2 bg-[var(--color-cream)] border border-[var(--color-cream-border)]">
-//                 <p className="text-[10px] uppercase tracking-widest text-[var(--color-slate)] font-[var(--font-sans)] mb-1">Catatan</p>
-//                 <p className="text-xs text-[var(--color-dark-muted)] font-[var(--font-sans)]">{detail.notes}</p>
-//               </div>
-//             )}
-
-//             <WorkflowPanel
-//               booking={detail}
-//               vendors={vendors}
-//               onUpdated={async () => {
-//                 await load()
-//                 // Refresh detail dengan data terbaru
-//                 const fresh = await adminService.getBookings()
-//                 const arr = Array.isArray(fresh) ? fresh : (fresh.data || [])
-//                 const updated = arr.find(b => b.id === detail.id)
-//                 if (updated) setDetail(updated)
-//               }}
-//             />
-//           </div>
-//         )}
-//       </Modal>
-//     </div>
-//   )
-// }
+function inputClass(hasError) {
+  return [
+    "w-full bg-transparent border-b-2 px-0 py-2.5",
+    "text-sm text-[var(--color-dark)] font-[var(--font-sans)]",
+    "placeholder:text-[var(--color-slate)]",
+    "outline-none transition-colors duration-200",
+    hasError
+      ? "border-red-400 focus:border-red-500"
+      : "border-[var(--color-cream-border)] focus:border-[var(--color-gold)]",
+  ].join(" ");
+}
