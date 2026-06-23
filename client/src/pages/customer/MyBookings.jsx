@@ -8,6 +8,15 @@ import { bookingService } from "../../services";
 import { toastSuccess, toastError } from "../../hooks/useToast";
 import { formatRupiah } from "../../data/packages";
 
+// Helper: ambil hanya YYYY-MM-DD agar tidak ada timezone shift
+function formatDate(str) {
+  if (!str) return "—";
+  const d = str.slice(0, 10); // "2026-07-30"
+  const [y, m, day] = d.split("-");
+  const months = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Ags","Sep","Okt","Nov","Des"];
+  return `${parseInt(day)} ${months[parseInt(m)-1]} ${y}`;
+}
+
 // Alur: Dipesan → Dibayar → Admin Proses → Hari H → Selesai
 const PHASES = [
   {
@@ -152,55 +161,57 @@ const ADMIN_MSG = {
     color: "bg-purple-50 border-purple-200 text-purple-700",
   },
   preparation: {
-    text: "🎪 Persiapan acara sedang berjalan.",
+    text: "🎪 Persiapan acara sedang berjalan. Tunggu hingga acara selesai untuk melakukan pelunasan.",
     color: "bg-indigo-50 border-indigo-200 text-indigo-700",
   },
   in_event: {
-    text: "💒 Selamat menjalani hari istimewa Anda!",
+    text: "💒 Selamat menjalani hari istimewa Anda! Pelunasan dapat dilakukan setelah acara selesai.",
     color: "bg-green-50 border-green-200 text-green-700",
   },
   completed: {
-    text: "🎉 Acara selesai. Terima kasih telah mempercayai AMARANTA!",
+    text: "🎉 Acara selesai! Silakan lakukan pelunasan 70% dan beri penilaian untuk vendor Anda.",
     color: "bg-emerald-50 border-emerald-200 text-emerald-700",
   },
 };
 
 function PhaseBar({ phase, adminStatus, hasDp, hasFull }) {
-  // Mapping phase + admin_status ke step 1-6 (new order: Dipesan → DP → Diproses → Hari H → Pelunasan → Selesai)
+  // Mapping phase + admin_status ke step 1-6
+  // Alur: Dipesan(1) → DP(2) → Diproses(3) → Hari H(4) → Pelunasan(5) → Selesai(6)
   function getStep() {
-    if (adminStatus === "waiting_dp" || phase === "pending") return 1;
-    if (adminStatus === "payment_failed") return 1;
-    if (
-      (phase === "dp_paid" || phase === "paid") &&
-      adminStatus === "waiting_vendor"
-    )
-      return 2;
+    // ── Step 6: Sudah dinilai (rated) ──────────────────────────────
+    if (phase === "rated") return 6;
+
+    // ── Step 6: Lunas + acara selesai → siap beri rating ───────────
+    if (hasFull && adminStatus === "completed") return 6;
+
+    // ── Step 5: Pelunasan — acara selesai, belum lunas ─────────────
+    // FIX #3: completed tanpa full payment → step 5, bukan langsung 6
+    if (adminStatus === "completed") return 5;
+
+    // ── Step 4: Hari H — acara berlangsung ─────────────────────────
+    if (phase === "in_event" || adminStatus === "in_event") return 4;
+
+    // ── Step 3: Diproses — vendor diproses s/d persiapan ───────────
+    // FIX #2: 'preparation' masuk step 3 (Diproses), bukan step 4 (Hari H)
     if (
       [
         "vendor_assigned",
         "vendor_confirmed",
         "vendor_rejected",
         "tech_meeting_scheduled",
+        "preparation",
       ].includes(adminStatus)
     )
       return 3;
-    if (adminStatus === "preparation") {
-      return 4;
-    }
-    if (phase === "in_event" || adminStatus === "in_event") return 4;
-    if (phase === "pelunasan" || (hasFull && adminStatus !== "waiting_dp"))
-      return 5;
-    if (phase === "rated" || adminStatus === "completed") return 6;
-    // Fallback
-    const m = {
-      pending: 1,
-      dp_paid: 2,
-      paid: 2,
-      in_event: 4,
-      pelunasan: 5,
-      rated: 6,
-    };
-    return m[phase] || 1;
+
+    // ── Step 2: DP dibayar — menunggu vendor ────────────────────────
+    // FIX #1: gunakan hasDp sebagai primary check, bukan hanya adminStatus
+    // Sehingga jika admin sudah assign vendor tapi phase/adminStatus
+    // belum terupdate di frontend, DP tidak terlewat/skip
+    if (hasDp || adminStatus === "waiting_vendor") return 2;
+
+    // ── Step 1: Belum bayar ─────────────────────────────────────────
+    return 1;
   }
   const cur = getStep();
 
@@ -376,10 +387,12 @@ export default function CustomerMyBookings() {
         rating: ratingValue,
         review: reviewText,
       });
+      // Update status, phase, rating di state lokal
+      // status: 'completed' agar tombol "Hapus dari Riwayat" muncul
       setBookings((p) =>
         p.map((b) =>
           b.id === ratingModal.id
-            ? { ...b, phase: "rated", rating: ratingValue }
+            ? { ...b, phase: "rated", status: "completed", rating: ratingValue, review: reviewText }
             : b,
         ),
       );
@@ -442,8 +455,11 @@ export default function CustomerMyBookings() {
     );
   }
 
+  // Pelunasan HANYA bisa dilakukan setelah acara selesai (admin_status === 'completed')
   function canPayRemaining(b) {
-    return isDpPaid(b) && !isFullPaid(b) && b.phase === "in_event";
+    if (isFullPaid(b)) return false; // Sudah lunas
+    if (!isDpPaid(b)) return false;  // Harus bayar DP dulu
+    return b.admin_status === "completed"; // Hanya setelah acara selesai
   }
 
   // BUG FIX: Handle pembayaran pelunasan
@@ -468,26 +484,34 @@ export default function CustomerMyBookings() {
         onSuccess: async () => {
           try {
             await bookingService.confirmPayment(paymentModal.id, "full");
-            toastSuccess("Pembayaran berhasil! Terima kasih.");
+            toastSuccess("Pembayaran pelunasan berhasil! Terima kasih.");
             setPaymentModal(null);
             loadBookings();
           } catch (err) {
             console.error("Confirm error:", err);
-            toastError("Gagal mengonfirmasi pembayaran.");
+            // Tetap reload data meskipun confirm gagal
+            toastSuccess("Pembayaran berhasil. Memuat ulang data...");
+            setPaymentModal(null);
+            loadBookings();
           }
         },
         onPending: () => {
           toastSuccess(
             "Pembayaran pending. Segera selesaikan pembayaran Anda.",
           );
+          setPaymentModal(null);
+          loadBookings();
         },
         onError: (err) => {
+          console.error("Snap error:", err);
           toastError(
-            "Pembayaran gagal: " + (err?.message || "Terjadi kesalahan."),
+            "Pembayaran gagal atau ditolak. Silakan coba lagi.",
           );
+          loadBookings();
         },
         onClose: () => {
           setPayLoading(false);
+          loadBookings();
         },
       });
     } catch (err) {
@@ -524,21 +548,32 @@ export default function CustomerMyBookings() {
             loadBookings();
           } catch (err) {
             console.error("Confirm error:", err);
-            toastError("Gagal mengonfirmasi pembayaran.");
+            // Tetap reload data meskipun confirm gagal (webhook mungkin sudah jalan)
+            toastSuccess("Pembayaran berhasil. Memuat ulang data...");
+            setDpPaymentModal(null);
+            loadBookings();
           }
         },
         onPending: () => {
           toastSuccess(
             "Pembayaran pending. Segera selesaikan pembayaran Anda.",
           );
+          setDpPaymentModal(null);
+          loadBookings();
         },
         onError: (err) => {
+          // onError dari Midtrans Snap (bukan gagal jaringan)
+          // Jangan call confirmPayment — cukup refresh data
+          console.error("Snap error:", err);
           toastError(
-            "Pembayaran gagal: " + (err?.message || "Terjadi kesalahan."),
+            "Pembayaran gagal atau ditolak. Silakan coba lagi.",
           );
+          loadBookings();
         },
         onClose: () => {
+          // User menutup popup tanpa bayar — jangan error
           setPayLoading(false);
+          loadBookings();
         },
       });
     } catch (err) {
@@ -671,7 +706,7 @@ export default function CustomerMyBookings() {
                     </p>
                     <div className="flex items-center gap-3 flex-wrap">
                       <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
-                        📅 {booking.wedding_date || "—"}
+                        📅 {formatDate(booking.wedding_date)}
                       </p>
                       <p className="text-xs text-[var(--color-slate)] font-[var(--font-sans)]">
                         📍 {booking.location || "—"}
@@ -726,7 +761,7 @@ export default function CustomerMyBookings() {
                   )?.vendor_notes && (
                     <div className="mb-4 p-3 bg-teal-50 border border-teal-200 text-xs font-[var(--font-sans)] rounded">
                       <p className="text-[10px] uppercase tracking-widest text-teal-800 font-bold mb-1">
-                        💬 Detail Pertemuan / Koordinasi dari Vendor:
+                        💬 Catatan Dari Vendor
                       </p>
                       <p className="text-teal-900 font-medium leading-relaxed">
                         {
@@ -920,20 +955,23 @@ export default function CustomerMyBookings() {
                     </button>
                   )}
 
-                  {/* Beri rating */}
-                  {booking.phase === "in_event" && !booking.rating && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setRatingModal(booking);
-                        setRatingValue(5);
-                        setReviewText("");
-                      }}
-                    >
-                      ⭐ Beri Penilaian
-                    </Button>
-                  )}
+                  {/* Beri rating — muncul jika lunas, acara selesai (completed), dan belum rating */}
+                  {(booking.admin_status === "completed" || booking.phase === "paid") &&
+                    isFullPaid(booking) &&
+                    !booking.rating &&
+                    booking.phase !== "rated" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setRatingModal(booking);
+                          setRatingValue(5);
+                          setReviewText("");
+                        }}
+                      >
+                        ⭐ Beri Penilaian
+                      </Button>
+                    )}
 
                   {/* Rating sudah ada */}
                   {booking.rating && <StarRating value={booking.rating} />}
@@ -1001,7 +1039,7 @@ export default function CustomerMyBookings() {
                             Tanggal Pernikahan:
                           </span>{" "}
                           <span className="text-[var(--color-dark)] font-semibold">
-                            {booking.wedding_date}
+                            {formatDate(booking.wedding_date)}
                           </span>
                         </p>
                         <p>

@@ -15,7 +15,7 @@ class BookingWorkflowController extends Controller
     public function assignVendor(Request $request, Booking $booking): JsonResponse
     {
         $request->validate([
-            'vendor_id'   => 'required|exists:vendors,id',
+            'vendor_id' => 'required|exists:vendors,id',
             'admin_notes' => 'sometimes|nullable|string',
         ]);
 
@@ -23,22 +23,22 @@ class BookingWorkflowController extends Controller
 
         // Buat vendor request baru
         VendorRequest::create([
-            'booking_id'  => $booking->id,
-            'vendor_id'   => $vendor->id,
+            'booking_id' => $booking->id,
+            'vendor_id' => $vendor->id,
             'assigned_by' => $request->user()->id,
-            'status'      => 'pending',
+            'status' => 'pending',
         ]);
 
         $booking->update([
-            'vendor_id'          => $vendor->id,
-            'admin_status'       => 'vendor_assigned',
+            'vendor_id' => $vendor->id,
+            'admin_status' => 'vendor_assigned',
             'vendor_assigned_at' => now(),
-            'admin_notes'        => $request->admin_notes,
+            'admin_notes' => $request->admin_notes,
         ]);
 
         return response()->json([
             'message' => 'Vendor berhasil di-assign.',
-            'data'    => $booking->fresh(['vendor', 'vendorRequests.vendor']),
+            'data' => $booking->fresh(['vendor', 'vendorRequests.vendor']),
         ]);
     }
 
@@ -52,21 +52,21 @@ class BookingWorkflowController extends Controller
         $vendor = Vendor::findOrFail($request->vendor_id);
 
         VendorRequest::create([
-            'booking_id'  => $booking->id,
-            'vendor_id'   => $vendor->id,
+            'booking_id' => $booking->id,
+            'vendor_id' => $vendor->id,
             'assigned_by' => $request->user()->id,
-            'status'      => 'pending',
+            'status' => 'pending',
         ]);
 
         $booking->update([
-            'vendor_id'          => $vendor->id,
-            'admin_status'       => 'vendor_assigned',
+            'vendor_id' => $vendor->id,
+            'admin_status' => 'vendor_assigned',
             'vendor_assigned_at' => now(),
         ]);
 
         return response()->json([
             'message' => 'Vendor baru berhasil di-assign.',
-            'data'    => $booking->fresh(['vendor', 'vendorRequests.vendor']),
+            'data' => $booking->fresh(['vendor', 'vendorRequests.vendor']),
         ]);
     }
 
@@ -74,21 +74,21 @@ class BookingWorkflowController extends Controller
     public function setTechMeeting(Request $request, Booking $booking): JsonResponse
     {
         $request->validate([
-            'tech_meeting_at'       => 'required|date|after:now',
+            'tech_meeting_at' => 'required|date|after:now',
             'tech_meeting_location' => 'required|string|max:255',
-            'tech_meeting_notes'    => 'sometimes|nullable|string',
+            'tech_meeting_notes' => 'sometimes|nullable|string',
         ]);
 
         $booking->update([
-            'tech_meeting_at'       => $request->tech_meeting_at,
+            'tech_meeting_at' => $request->tech_meeting_at,
             'tech_meeting_location' => $request->tech_meeting_location,
-            'tech_meeting_notes'    => $request->tech_meeting_notes,
-            'admin_status'          => 'tech_meeting_scheduled',
+            'tech_meeting_notes' => $request->tech_meeting_notes,
+            'admin_status' => 'tech_meeting_scheduled',
         ]);
 
         return response()->json([
             'message' => 'Tech meeting dijadwalkan.',
-            'data'    => $booking->fresh(),
+            'data' => $booking->fresh(),
         ]);
     }
 
@@ -97,12 +97,12 @@ class BookingWorkflowController extends Controller
     {
         $booking->update([
             'tech_meeting_confirmed' => true,
-            'admin_status'           => 'preparation',
+            'admin_status' => 'preparation',
         ]);
 
         return response()->json([
             'message' => 'Tech meeting dikonfirmasi. Persiapan dimulai.',
-            'data'    => $booking->fresh(),
+            'data' => $booking->fresh(),
         ]);
     }
 
@@ -119,28 +119,44 @@ class BookingWorkflowController extends Controller
 
         return response()->json([
             'message' => 'Progress diperbarui: ' . $request->preparation_progress . '%',
-            'data'    => $booking->fresh(),
+            'data' => $booking->fresh(),
         ]);
     }
 
     // PATCH /api/admin/bookings/{booking}/execute-event
     public function markEventExecuted(Request $request, Booking $booking): JsonResponse
     {
-        if (!$booking->isFullPaid()) {
-            return response()->json([
-                'message' => 'Acara tidak bisa dieksekusi. Pembayaran belum lunas.',
-            ], 422);
-        }
+        // BUG FIX: Hapus requirement isFullPaid() — admin bisa eksekusi acara tanpa pembayaran tuntas
+        // Pembayaran akan dianggap tuntas saat acara selesai
 
         $booking->update([
             'admin_status' => 'in_event',
-            'phase'        => 'in_event',
-            'status'       => 'confirmed',
+            'phase' => 'in_event',
+            'status' => 'confirmed',
         ]);
 
         return response()->json([
             'message' => 'Acara ditandai sedang berlangsung.',
-            'data'    => $booking->fresh(),
+            'data' => $booking->fresh(),
+        ]);
+    }
+
+    // PATCH /api/admin/bookings/{booking}/mark-completed
+    public function markEventCompleted(Request $request, Booking $booking): JsonResponse
+    {
+        // BUG FIX: Tandai acara selesai, customer bisa bayar sisa dan dapat invoice
+        // Jangan auto-mark payment — biarkan customer bayar sendiri setelah acara selesai
+        // Phase tetap 'in_event' (event sudah berlangsung), admin_status = 'completed'
+
+        $booking->update([
+            'admin_status' => 'completed',
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Acara ditandai selesai. Customer dapat membayar sisa dan rating sekarang.',
+            'data' => $booking->fresh(['payments']),
         ]);
     }
 
@@ -157,24 +173,24 @@ class BookingWorkflowController extends Controller
         if (!$payment) {
             $payment = \App\Models\Payment::create([
                 'booking_id' => $booking->id,
-                'type'       => $paymentType,
-                'amount'     => $paymentType === 'dp30'
+                'type' => $paymentType,
+                'amount' => $paymentType === 'dp30'
                     ? ($booking->dp_amount ?: (int) round($booking->total_price * 0.3))
                     : $booking->total_price,
-                'status'     => 'pending',
+                'status' => 'pending',
             ]);
         }
 
         $payment->update([
-            'status'  => 'success',
+            'status' => 'success',
             'paid_at' => now(),
         ]);
 
         if ($paymentType === 'full') {
             $updates = [
-                'phase'          => 'paid',
-                'full_paid_at'   => now(),
-                'status'         => 'confirmed',
+                'phase' => 'paid',
+                'full_paid_at' => now(),
+                'status' => 'confirmed',
             ];
             if ($booking->phase === 'pending') {
                 $updates['admin_status'] = 'waiting_vendor';
@@ -182,15 +198,16 @@ class BookingWorkflowController extends Controller
             $booking->update($updates);
         } else {
             $booking->update([
-                'phase'          => 'dp_paid',
-                'dp_paid_at'     => now(),
-                'admin_status'   => 'waiting_vendor',
+                'phase' => 'dp_paid',
+                'dp_paid_at' => now(),
+                'status' => 'confirmed',
+                'admin_status' => 'waiting_vendor',
             ]);
         }
 
         return response()->json([
             'message' => 'Pembayaran berhasil dikonfirmasi oleh Admin.',
-            'data'    => $booking->fresh(['vendor', 'vendorRequests.vendor', 'payments']),
+            'data' => $booking->fresh(['vendor', 'vendorRequests.vendor', 'payments']),
         ]);
     }
 }

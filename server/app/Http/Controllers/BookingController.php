@@ -195,10 +195,10 @@ class BookingController extends Controller
             return response()->json(['message' => 'Anda harus membayar DP terlebih dahulu.'], 422);
         }
 
-        // Cek apakah status workflow sudah mencapai 'preparation' dan sebelum hari H
-        if ($booking->admin_status !== 'preparation') {
+        // Pelunasan HANYA bisa dilakukan setelah acara selesai
+        if ($booking->admin_status !== 'completed') {
             return response()->json([
-                'message' => 'Sisa pembayaran baru dapat dilunasi setelah koordinasi vendor & meeting dijadwalkan (status Persiapan) dan sebelum Hari H.'
+                'message' => 'Pelunasan hanya dapat dilakukan setelah acara selesai. Tunggu admin menandai acara selesai.',
             ], 422);
         }
 
@@ -282,7 +282,12 @@ class BookingController extends Controller
         if (!$vendor) {
             return response()->json(['message' => 'Profil vendor tidak ditemukan.'], 404);
         }
-        $requests = VendorRequest::with(['booking.customer', 'booking.package', 'assignedBy'])
+        $requests = VendorRequest::with([
+                'booking.customer',
+                'booking.package',
+                'booking.payments',
+                'assignedBy',
+            ])
             ->where('vendor_id', $vendor->id)
             ->latest()
             ->get();
@@ -473,6 +478,7 @@ class BookingController extends Controller
             $booking->update([
                 'phase'          => 'dp_paid',
                 'dp_paid_at'     => now(),
+                'status'         => 'confirmed',
                 'admin_status'   => 'waiting_vendor',
             ]);
         }

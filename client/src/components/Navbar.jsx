@@ -59,8 +59,8 @@ function Navbar({ transparent, theme }) {
     return "/pelanggan/profil";
   }
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     setUserOpen(false);
     setMenuOpen(false);
     navigate("/");

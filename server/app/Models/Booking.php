@@ -28,7 +28,7 @@ class Booking extends Model
         'admin_status', 'admin_notes', 'vendor_assigned_at',
         'tech_meeting_at', 'tech_meeting_location',
         'tech_meeting_notes', 'tech_meeting_confirmed',
-        'preparation_progress',
+        'preparation_progress', 'completed_at',
     ];
 
     protected function casts(): array

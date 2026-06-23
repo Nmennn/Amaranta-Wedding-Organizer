@@ -126,6 +126,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/bookings/{booking}/confirm-tech-meeting', [BookingWorkflowController::class, 'confirmTechMeeting']);
         Route::patch('/bookings/{booking}/preparation',          [BookingWorkflowController::class, 'updatePreparation']);
         Route::patch('/bookings/{booking}/execute-event',        [BookingWorkflowController::class, 'markEventExecuted']);
+        Route::patch('/bookings/{booking}/mark-completed',       [BookingWorkflowController::class, 'markEventCompleted']);
         Route::patch('/bookings/{booking}/confirm-payment',      [BookingWorkflowController::class, 'confirmPayment']);
     });
 });

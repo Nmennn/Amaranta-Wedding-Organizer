@@ -394,10 +394,10 @@ function Packages() {
           </p>
           <div className="flex flex-wrap gap-3 justify-center">
             <Link
-              to="/paket"
+              to="/pelanggan/pemesanan"
               className="px-8 py-3.5 bg-[var(--color-gold)] text-[var(--color-dark)] text-xs uppercase tracking-widest font-[var(--font-sans)] font-medium hover:bg-[var(--color-gold-light)] transition-colors"
             >
-              Lihat Keranjang
+              Pemesanan Saya
             </Link>
             <Link
               to="/tentang"

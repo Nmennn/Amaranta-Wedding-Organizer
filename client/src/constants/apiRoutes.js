@@ -79,6 +79,7 @@ export const ADMIN = {
   CONFIRM_TECH: (id) => `${BASE_URL}/admin/bookings/${id}/confirm-tech-meeting`,
   PREPARATION: (id) => `${BASE_URL}/admin/bookings/${id}/preparation`,
   EXECUTE_EVENT: (id) => `${BASE_URL}/admin/bookings/${id}/execute-event`,
+  MARK_COMPLETED: (id) => `${BASE_URL}/admin/bookings/${id}/mark-completed`,
 };
 
 export const GALLERY = {

@@ -104,6 +104,7 @@ export const adminService = {
   updatePreparation: (id, pct) =>
     api.patch(ADMIN.PREPARATION(id), { preparation_progress: pct }).then(d),
   executeEvent: (id) => api.patch(ADMIN.EXECUTE_EVENT(id)).then(d),
+  markEventCompleted: (id) => api.patch(ADMIN.MARK_COMPLETED(id)).then(d),
   confirmPayment: (id, data) =>
     api.patch(`${ADMIN.BOOKINGS}/${id}/confirm-payment`, data).then(d),
 };
