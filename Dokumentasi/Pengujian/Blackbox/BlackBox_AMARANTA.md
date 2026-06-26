@@ -1,6 +1,6 @@
 # BLACK-BOX TESTING
 ## Aplikasi AMARANTA — Wedding Organizer Web Application
-### Mata Kuliah: Software Testing | Dosen: R. Irman Hariman, ST., MT.
+### Mata Kuliah: Software Quality | Dosen: Deni Suprihadi, S.T, M.KOM., MCE.
 
 ---
 
